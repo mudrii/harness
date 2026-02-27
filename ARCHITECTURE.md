@@ -140,3 +140,5 @@ sequenceDiagram
 - M2: recommendation engine + suggest.
 - M3: safe apply with patch preview.
 - M4: trace ingestion + optimize loops.
+
+See PLAN.md Section 17 for the week-by-week execution timeline mapping to these milestones.

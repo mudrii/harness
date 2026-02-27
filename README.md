@@ -1,5 +1,8 @@
 # Harness
 
+> **Status: Pre-alpha / Active Development**
+> CLI parsing is functional, but analysis, scoring, and recommendation features are not yet implemented. See PLAN.md for the roadmap.
+
 `harness` is a Rust CLI for engineering agent harnesses: it scans a repository, scores it, and recommends or generates changes to improve AI-agent reliability, continuity, and cost efficiency.
 
 ## Why this exists
@@ -23,18 +26,16 @@ cargo build --release
 ## Quick start
 
 ```bash
-# analyze an existing repository
+git clone git@github.com:mudrii/harness.git
+cd harness
+cargo build --release
+
+# CLI parses commands but analysis logic is under development
 harness analyze /path/to/repo
-
-# show ranked recommendations
-harness suggest /path/to/repo
-
-# initialize harness scaffold
-harness init /path/to/repo --profile agent --dry-run
-
-# apply generated changes
-harness apply /path/to/repo --plan-file .harness/plan.json
+harness init /path/to/repo --profile general --dry-run
 ```
+
+> Full functionality is under development. See PLAN.md Section 17 for milestones.
 
 ## Command overview
 
@@ -42,8 +43,8 @@ harness apply /path/to/repo --plan-file .harness/plan.json
 - `harness analyze` — read-only health report (JSON/Markdown/SARIF).
 - `harness suggest` — rank safe-to-apply changes.
 - `harness apply` — preview/apply scaffold and patches.
-- `harness optimize` — use traces to generate next-gen recommendations.
-- `harness bench` — benchmark before/after revisions.
+- `harness optimize` — *(v1.1)* use traces to generate next-gen recommendations.
+- `harness bench` — *(v1.1)* benchmark before/after revisions.
 - `harness lint` — validate profile conformance.
 
 ## Suggested repository layout
@@ -60,14 +61,14 @@ path/to/repo/
   harness.toml
 ```
 
-## Example output
+## Planned output (not yet implemented)
 
-`harness analyze` returns:
-- weighted overall score,
-- category scores,
-- actionable recommendations,
-- confidence and risk labels,
+When complete, `harness analyze` will return:
+- weighted overall score (5 categories),
+- actionable recommendations with confidence and risk labels,
 - optional diff preview.
+
+See PLAN.md Sections 7 and 8 for the scoring model and recommendation taxonomy.
 
 ## Contributing
 

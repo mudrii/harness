@@ -188,7 +188,7 @@ Merge order: global < repo < local override.
 ```toml
 [project]
 name = "repo-name"
-profile = "agent" # agent|ops|general|strict
+profile = "agent" # agent|general (v1); ops|strict deferred to v1.1
 language = "rust"
 main_branch = "main"
 
@@ -218,7 +218,7 @@ feature_state_file = ".harness/feature_list.json"
 state_schema_version = 1
 
 [metrics]
-weights = { context = 0.35, tools = 0.20, continuity = 0.25, verification = 0.20 }
+weights = { context = 0.30, tools = 0.25, continuity = 0.20, verification = 0.15, repository_quality = 0.10 }
 max_risk_tolerance = 0.35
 
 [workflow]
@@ -400,8 +400,8 @@ Acceptance criterion for every change:
 - CLI: `clap`
 - Serialization: `serde`, `serde_json`, `toml`
 - Filesystem walk: `walkdir`
-- Markdown handling: simple parser + optional `pulldown-cmark`
-- Template rendering: `handlebars`
+- Markdown handling: simple parser (v1); `pulldown-cmark` deferred to v1.1
+- Template rendering: string interpolation (v1); `handlebars` deferred to v1.1
 - Tracing/logging: `tracing`, `tracing-subscriber`
 - Error handling: `thiserror`
 
@@ -409,7 +409,7 @@ Acceptance criterion for every change:
 
 - `scan::discover(path: &Path) -> RepoModel`
 - `analyze::score(model: &RepoModel, cfg: &Config) -> HarnessReport`
-- `optimize::plan(report: &HarnessReport, policy: &Policy) -> Vec<Change`
+- `optimization::plan(report: &HarnessReport, policy: &Policy) -> Vec<Change>`
 - `generator::render(plan: &[Change], mode: RenderMode) -> Vec<FilePatch>`
 - `writer::apply(patches: &[FilePatch], options: ApplyOptions) -> ApplyResult`
 - `trace::load_runs(path: &Path) -> TraceSummary`
@@ -462,7 +462,7 @@ src/
     continuity.rs
     verification.rs
     quality.rs
-  optimize/
+  optimization/
     mod.rs
     scoring.rs
     recommender.rs
@@ -538,11 +538,13 @@ src/
 
 ## 17) Milestones (practical)
 
-- Week 1-2: scanner + `analyze` + `suggest` dry-run.
-- Week 3-4: `init` and safe `apply` with templates.
-- Week 5-6: trace ingestion and `bench` loop.
-- Week 7: policy packs and team profiles.
-- Week 8: v1 release candidate and stability hardening.
+- Week 1-2: **[M1]** scanner + `analyze` command. **[M2 start]** recommendation engine + `suggest` dry-run.
+- Week 3-4: **[M2 complete]** `suggest` finalized. **[M3]** `init` and safe `apply` with patch preview.
+- Week 5-6: **[M4]** trace ingestion, `optimize`, and `bench` loop.
+- Week 7: policy packs and team profiles. Stability hardening begins.
+- Week 8: v1 release candidate, docs, and integration testing.
+
+See ARCHITECTURE.md Section 10 for milestone definitions (M1-M4).
 
 ## 18) Immediate next technical tasks
 
