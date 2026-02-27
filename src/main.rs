@@ -398,18 +398,21 @@ fn write_bench_report(
 }
 
 fn render_optimize_report(report: &types::report::HarnessReport) -> String {
+    let mut ordered_report = report.clone();
+    ordered_report.sort_recommendations();
+
     let mut lines = vec![
         "# Harness Optimize Report".to_string(),
         String::new(),
-        format!("Overall score: {:.3}", report.overall_score),
+        format!("Overall score: {:.3}", ordered_report.overall_score),
         String::new(),
         "## Top Recommendations".to_string(),
     ];
 
-    if report.recommendations.is_empty() {
+    if ordered_report.recommendations.is_empty() {
         lines.push("- No recommendations available.".to_string());
     } else {
-        for recommendation in report.recommendations.iter().take(10) {
+        for recommendation in ordered_report.recommendations.iter().take(10) {
             lines.push(format!(
                 "- `{}`: {} (impact: {:?}, effort: {:?}, risk: {:?}, confidence: {:.2})",
                 recommendation.id,
@@ -423,6 +426,54 @@ fn render_optimize_report(report: &types::report::HarnessReport) -> String {
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::report::{Effort, HarnessReport, Impact, Recommendation, Risk};
+    use crate::types::scoring::ScoreCard;
+
+    #[test]
+    fn render_optimize_report_orders_recommendations_by_priority() {
+        let report = HarnessReport {
+            overall_score: 0.5,
+            category_scores: ScoreCard::new(0.5, 0.5, 0.5, 0.5, 0.5),
+            findings: vec![],
+            recommendations: vec![
+                Recommendation::new(
+                    "low",
+                    "Low",
+                    "low summary",
+                    Impact::Low,
+                    Effort::Xs,
+                    Risk::Safe,
+                    0.6,
+                ),
+                Recommendation::new(
+                    "high",
+                    "High",
+                    "high summary",
+                    Impact::High,
+                    Effort::S,
+                    Risk::Safe,
+                    0.9,
+                ),
+            ],
+        };
+
+        let rendered = render_optimize_report(&report);
+        let high_pos = rendered
+            .find("`high`")
+            .expect("high recommendation should render");
+        let low_pos = rendered
+            .find("`low`")
+            .expect("low recommendation should render");
+        assert!(
+            high_pos < low_pos,
+            "high-priority recommendation should appear first"
+        );
+    }
 }
 
 fn main() {
