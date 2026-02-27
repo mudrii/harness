@@ -67,10 +67,13 @@ pub struct SuggestCommand {
 #[derive(Args)]
 pub struct ApplyCommand {
     pub path: PathBuf,
-    #[arg(long)]
+    
+    #[arg(long, required_unless_present = "plan_all")]
     pub plan_file: Option<String>,
-    #[arg(long)]
+    
+    #[arg(long, conflicts_with = "plan_file")]
     pub plan_all: bool,
+    
     #[arg(long, value_enum, default_value = "preview")]
     pub apply_mode: ApplyMode,
     #[arg(long)]
