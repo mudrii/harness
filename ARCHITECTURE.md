@@ -1,157 +1,204 @@
 # Harness Architecture
 
-## 1. Purpose
+## 1. Scope
 
-`harness` is a Rust CLI that analyzes a repository and emits an agent-optimized harness profile. It focuses on reducing tool sprawl, improving agent legibility, enforcing continuity, and continuously tuning behavior through traces.
+`harness` is a single-binary Rust CLI (`harness`) that evaluates and improves repository harnesses for AI agents.  
+The system is intentionally deterministic: same input repository + same config should produce stable findings and recommendation ordering.
 
-## 2. Principles
+## 2. Architectural goals
 
-1. Start from minimal viable tools.
-2. Keep guidance file-based and versioned in-repo.
-3. Prefer deterministic, auditable harness rules over opaque runtime heuristics.
-4. Make long-running work resumable via explicit state artifacts.
-5. Optimize iteratively from measured traces.
+1. Keep core analysis read-only and reproducible.
+2. Separate discovery, scoring, recommendation, and write/apply phases.
+3. Treat policy enforcement (guardrails, lifecycle, forbidden commands) as first-class.
+4. Preserve rollback and reviewability for every write path.
+5. Close the loop with trace-driven optimization.
 
-## 3. High-level flow
+## 3. Runtime shape
 
 ```mermaid
 flowchart TD
-  A[CLI Input] --> B[Config Merge]
-  B --> C[Repository Scanner]
-  C --> D[Analyzer]
-  D --> E[Scoring Engine]
-  E --> F[Recommendation Planner]
-  F --> G[Report Writer]
-  F --> H[Patch Generator]
-  H --> I[Apply Engine]
-  J[Trace Store] --> K[Optimization Engine]
-  K --> F
-  I --> L[Post-Apply Lint/Validation]
+  A["CLI (clap)"] --> B["Config Loader"]
+  B --> C["Scanner"]
+  C --> D["Analyzer"]
+  D --> E["Scoring + Findings"]
+  E --> F["Recommendation Engine"]
+  F --> G["Report Renderers"]
+  F --> H["Generator / Plan Writer"]
+  H --> I["Apply Engine"]
+  J["Trace Parser + Aggregation"] --> F
+  I --> K["Guardrails + Rollback Manifest"]
 ```
 
-## 4. Modules and responsibilities
+## 4. Layered components
 
-### CLI layer
-- `main.rs` and `cli.rs` parse commands and dispatch.
-- Maps user intent into one of: `init`, `analyze`, `suggest`, `apply`, `optimize`, `bench`, `lint`.
+### 4.1 CLI and orchestration
+- Entry points: `src/main.rs`, `src/cli.rs`
+- Responsibilities:
+  - Parse command-line arguments
+  - Resolve command-specific execution paths
+  - Normalize exit codes and top-level error rendering
+  - Emit continuity runtime records for command lifecycle
 
-### Configuration
-- `config.rs` and `types/config.rs` handle layered config loading.
-- Merge order: global config -> repo config -> local overrides.
+### 4.2 Configuration
+- Entry points: `src/config.rs`, `src/types/config.rs`
+- Responsibilities:
+  - Load global, repository, and local override config
+  - Validate profiles, tool lifecycle fields, and metric weights
+  - Produce a typed `HarnessConfig` consumed by command handlers
+- Merge order:
+  1. Global config
+  2. Repo config
+  3. Local override
 
-### Discovery / scanning
-- `scan/` modules inspect repository structure and metadata.
-- Inputs: file inventory, docs presence, existing harness files, git metadata.
+### 4.3 Discovery and repository model
+- Entry points: `src/scan/*`
+- Responsibilities:
+  - Filesystem inventory
+  - Docs/context presence checks
+  - Tooling signatures
+  - Git metadata and repo health signals
+- Output:
+  - Normalized repository snapshot used by analysis modules
 
-### Analysis
-- `analyze/` computes deterministic signals and sub-scores:
-  - context quality,
-  - tool set health,
-  - continuity/readiness,
-  - verification readiness,
-  - repo architecture quality.
+### 4.4 Analysis and scoring
+- Entry points: `src/analyze/*`, `src/types/scoring.rs`
+- Responsibilities:
+  - Compute category scores (context, tools, continuity, verification, quality)
+  - Emit deterministic findings with severity and evidence anchors
+  - Feed optimizer with score/finding structures
 
-### Optimization
-- `optimization/` converts scores into change plans.
-- Rule-based and profile-driven with confidence + impact classification.
+### 4.5 Recommendation and optimization
+- Entry points: `src/optimization/*`
+- Responsibilities:
+  - Convert findings + scores into ordered recommendation sets
+  - Apply profile-driven thresholds and rules
+  - Use trace data to refine priority and suppress low-value changes
+  - Preserve deterministic order in equal-score cases
 
-### Generation
-- `generator/` renders patch-level outputs from templates.
-- Produces harness manifest, prompt stubs, and workflow artifacts.
+### 4.6 Generation and apply
+- Entry points: `src/generator/*`
+- Responsibilities:
+  - Materialize plans and patch candidates
+  - Enforce apply preconditions
+  - Create rollback manifests before modifications
+  - Write updated files through a controlled writer path
 
-### Trace feedback
-- `trace/` ingests run traces, aggregates failures and progress,
-  then feeds harness suggestions to optimization rules.
+### 4.7 Guardrails and policy
+- Entry points: `src/guardrails/*`
+- Responsibilities:
+  - Validate command/tool usage against policy
+  - Resolve aliases prior to matching
+  - Enforce deprecation lifecycle:
+    - `observe`: non-blocking finding
+    - `deprecated`: blocking finding
+    - `disabled`: hard policy block for apply/guardrails
+  - Detect risky loops and unsafe command patterns
 
-### Reporting
-- `report/` renders Markdown/JSON/SARIF outputs.
+### 4.8 Trace ingestion and continuity
+- Entry points: `src/trace/*`, `src/continuity.rs`
+- Responsibilities:
+  - Parse trace inputs
+  - Aggregate failure classes and command patterns
+  - Provide optimization signal
+  - Persist command lifecycle logs with rotation/batching controls
 
-### Guardrails
-- `guardrails/` handles command policy checks and loop detection signals.
+### 4.9 Reporting
+- Entry points: `src/report/*`
+- Formats:
+  - Markdown
+  - JSON
+  - SARIF
+- Responsibilities:
+  - Keep report schema stable
+  - Preserve evidence references for auditability
 
-## 5. Command contracts
+## 5. Command-level execution contracts
 
-- `init`: create initial scaffold if absent.
-- `analyze`: read-only diagnostics and score report.
-- `suggest`: return ranked change plan.
-- `apply`: emit or apply patches in dry-run/approve modes.
-  - **Preconditions (5-step sequence):**
-    1. Clean working tree check (unless `--allow-dirty`)
-    2. Plan file validation (exists, parses, no path traversal, version match)
-    3. Rollback manifest creation (`.harness/rollback/<timestamp>.json`)
-    4. Change scope summary (modified/created/deleted file counts)
-    5. Confirmation prompt (`y/N`, skipped with `--yes` or in preview mode)
-  - **Selector:** Exactly one of `--plan-file <path>` or `--plan-all` is required (mutually exclusive).
-- `optimize`: compare harness revisions using trace and benchmark deltas.
-- `bench`: run benchmark suite and capture run metrics.
-- `lint`: verify conformance to selected harness profile.
-  - Checks required files exist per active profile.
-  - Validates tool configurations against forbidden/deprecated policy.
-  - Returns exit code 2 for blocking violations, 1 for warnings, 0 for clean.
+### `init`
+- Creates scaffold artifacts required by selected profile.
+- Must be idempotent for existing files unless explicitly overwritten.
 
-## 6. Data contracts (core)
+### `analyze`
+- Read-only path.
+- Returns score + findings + recommendations in selected format.
 
-### Harness report
-- `overall_score`: weighted composite.
-- `category_scores`: context / tools / continuity / verification / quality.
-- `findings`: issues with file references and line hints when available.
-- `recommendations`: ordered list with confidence and risk.
+### `suggest`
+- Read-only path.
+- Returns ordered recommendation candidates.
 
-### Change plan
-- `id`, `title`, `goal`, `risk`, `impact`, `effort`, `commands`, `patches`.
+### `apply`
+- Writes changes from plan input.
+- Preconditions:
+  1. Working tree cleanliness check (unless override enabled)
+  2. Plan source validation (`--plan-file` xor `--plan-all`)
+  3. Policy/guardrail checks
+  4. Rollback manifest creation
+  5. Optional confirmation gate unless non-interactive flags are provided
 
-### Trace summary
-- task ids, failures by class, tool call sequence, elapsed time, pass/fail.
+### `optimize`
+- Consumes traces/metrics and emits refined recommendation output.
+- Uses config thresholds to gate weak statistical signals.
 
-## 7. Data flow details
+### `bench`
+- Produces benchmark data and optional compare output.
+- Compare mode enforces environment guardrails unless `--force-compare` is used.
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as User
-  participant C as CLI
-  participant S as Scanner
-  participant A as Analyzer
-  participant O as Optimizer
-  participant G as Generator
-  participant W as Writer
+### `lint`
+- Verifies harness profile conformance and policy compliance.
+- Exit behavior:
+  - `0` clean
+  - `1` warnings
+  - `2` blocking violations
+  - `3` runtime/fatal error
 
-  U->>C: run `harness analyze`
-  C->>S: discover repository state
-  S->>A: normalized signal model
-  A->>O: scored report
-  O->>C: recommendations
-  C->>U: render markdown/json report
+## 6. Core data contracts
 
-  U->>C: run `harness apply --preview`
-  C->>G: create patch plan
-  G->>U: show diff summary
-  U->>C: confirm apply
-  C->>W: write files and manifests
-```
+### 6.1 Report contract
+- `overall_score`
+- `category_scores`
+- `findings`
+- `recommendations`
 
-## 8. Security model
+### 6.2 Plan contract
+- plan identity and metadata (`id`, `title`, `goal`)
+- risk/impact/effort fields
+- command and patch instructions
 
-- baseline deny list for destructive/system commands.
-- explicit opt-in for privileged actions.
-- dry-run default for changes.
-- no implicit writes in analyze/suggest modes.
-- **Tool deprecation lifecycle:** 3-phase (observe → deprecated → disabled) managed via `[tools.deprecated]` config. See PLAN.md §5.2 for phase behavior.
-- **Alias expansion:** command policy resolves aliases before matching (e.g., `grep` → `rg`).
-- **Apply rollback:** every `apply` creates a rollback manifest with SHA256 hashes before any file modification.
+### 6.3 Trace contract
+- task identity
+- tool invocation sequence
+- failure classes
+- elapsed/runtime signals
 
-## 9. Exit behavior
+## 7. Reliability model
 
-- 0: success with no blocking issues
-- 1: success with warnings
-- 2: blocking issues or policy violations
-- 3: runtime/fatal execution error
+- Deterministic recommendation ordering to avoid plan churn.
+- Strict config validation to fail fast on unknown/invalid fields.
+- Defensive parse handling for traces and config overlays.
+- Rollback-first strategy for write paths.
+- Guardrail checks before apply operations.
 
-## 10. Delivery milestone path
+## 8. Testing strategy
 
-- M1: scanning + analyze command.
-- M2: recommendation engine + suggest.
-- M3: safe apply with patch preview.
-- M4: trace ingestion + optimize loops.
+- Unit tests in `src/*` modules for core logic and parsing.
+- Integration tests in `tests/integration.rs` for multi-module behavior.
+- CLI ATDD scenarios in `tests/cli_atdd.rs` for end-to-end command behavior and error paths.
+- TDD-first additions on critical logic, ATDD additions for user-facing flow regressions.
 
-See PLAN.md Section 17 for the week-by-week execution timeline mapping to these milestones.
+## 9. Extensibility points
+
+- Add new analysis dimensions by:
+  1. introducing module logic under `src/analyze/`
+  2. extending score/report types in `src/types/`
+  3. wiring recommendation rules in `src/optimization/`
+  4. adding unit + CLI coverage
+- Add new report format by:
+  1. implementing renderer under `src/report/`
+  2. adding CLI format mapping
+  3. adding golden-style output tests
+
+## 10. Reference documents
+
+- Project structure map: `docs/CODE_STRUCTURE.md`
+- Installation and operations: `docs/INSTALLATION.md`
+- Product and implementation phases: `PLAN.md`

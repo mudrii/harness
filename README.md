@@ -1,75 +1,80 @@
 # Harness
 
-> **Status: Pre-alpha / Active Development**
-> CLI parsing is functional, but analysis, scoring, and recommendation features are not yet implemented. See PLAN.md for the roadmap.
+`harness` is a Rust CLI that analyzes and hardens AI-agent harnesses in a repository.  
+It focuses on:
+- toolset minimization and policy enforcement,
+- continuity for long-running agent tasks,
+- deterministic quality and verification signals,
+- safe, reviewable change planning and apply flows.
 
-`harness` is a Rust CLI for engineering agent harnesses: it scans a repository, scores it, and recommends or generates changes to improve AI-agent reliability, continuity, and cost efficiency.
+## Status
 
-## Why this exists
+`harness` is in active development. Core commands are implemented and covered with unit tests, integration tests, and CLI ATDD scenarios.
 
-Current AI-agent workflows often fail not due to model weakness, but due to harness design:
-- too many overlapping tools,
-- unclear agent instructions,
-- weak verification gates,
-- poor continuity for long-running sessions.
+## Requirements
 
-`harness` optimizes the control plane around agents.
+- Rust stable toolchain (Cargo + rustc)
+- Git
+- POSIX shell (`bash`) for `scripts/install.sh`
 
-## Install
+## Installation
+
+Recommended:
 
 ```bash
 git clone git@github.com:mudrii/harness.git
 cd harness
-cargo build --release
+./scripts/install.sh --method path --force
 ```
+
+Alternative (direct git install through Cargo):
+
+```bash
+./scripts/install.sh --method git --repo-url https://github.com/mudrii/harness --force
+```
+
+Manual install without script:
+
+```bash
+cargo install --path . --locked --force
+```
+
+Detailed installation guide and troubleshooting: `docs/INSTALLATION.md`.
 
 ## Quick start
 
 ```bash
-git clone git@github.com:mudrii/harness.git
-cd harness
-cargo build --release
-
-# CLI parses commands but analysis logic is under development
-harness analyze /path/to/repo
-harness init /path/to/repo --profile general --dry-run
+harness analyze /path/to/repo --format markdown
+harness suggest /path/to/repo --format json
+harness apply /path/to/repo --plan-file .harness/plans/latest.json --preview
+harness lint /path/to/repo
 ```
-
-> Full functionality is under development. See PLAN.md Section 17 for milestones.
 
 ## Command overview
 
-- `harness init` — bootstrap scaffold and baseline prompts.
-- `harness analyze` — read-only health report (JSON/Markdown/SARIF).
-- `harness suggest` — rank safe-to-apply changes.
-- `harness apply` — preview/apply scaffold and patches.
-- `harness optimize` — *(v1.1)* use traces to generate next-gen recommendations.
-- `harness bench` — *(v1.1)* benchmark before/after revisions.
-- `harness lint` — validate profile conformance.
+- `harness init`: bootstrap harness scaffold files
+- `harness analyze`: produce diagnostics and category scoring
+- `harness suggest`: produce ranked recommendations
+- `harness apply`: preview/apply generated plans with rollback manifests
+- `harness optimize`: optimize recommendations based on traces
+- `harness bench`: run benchmark/compare workflows with guardrails
+- `harness lint`: enforce harness profile and policy conformance
 
-## Suggested repository layout
+## Documentation
 
-```text
-path/to/repo/
-  AGENTS.md
-  docs/context/
-  .harness/
-    initializer.prompt.md
-    coding.prompt.md
-    progress.md
-    feature_list.json
-  harness.toml
+- Architecture: `ARCHITECTURE.md`
+- Code structure map: `docs/CODE_STRUCTURE.md`
+- Installation and upgrade: `docs/INSTALLATION.md`
+- Product and implementation plan: `PLAN.md`
+
+## Development
+
+```bash
+cargo check --all-targets
+cargo test
+cargo clippy --all-targets
 ```
 
-## Planned output (not yet implemented)
+## License
 
-When complete, `harness analyze` will return:
-- weighted overall score (5 categories),
-- actionable recommendations with confidence and risk labels,
-- optional diff preview.
-
-See PLAN.md Sections 7 and 8 for the scoring model and recommendation taxonomy.
-
-## Contributing
-
-Contributions should align with the architecture in `ARCHITECTURE.md`. Use small, deterministic changes and avoid adding speculative behavior without corresponding trace evidence.
+MIT. See `Cargo.toml` for package metadata.
