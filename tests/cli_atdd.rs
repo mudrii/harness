@@ -327,3 +327,32 @@ fn optimize_writes_report_file() {
         "optimize should write at least one report"
     );
 }
+
+#[test]
+fn analyze_fails_on_invalid_config_weights() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[metrics.weights]
+context = 0.9
+tools = 0.9
+continuity = 0.1
+verification = 0.1
+repository_quality = 0.1
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("analyze")
+        .arg(repo.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("metrics.weights must sum to 1.0"));
+}
