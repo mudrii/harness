@@ -57,11 +57,13 @@ struct RollbackFile {
 }
 
 pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
+    let loaded = config::load_config(&cmd.path)?;
+
     if !cmd.allow_dirty {
         check_clean_tree(&cmd.path)?;
     }
 
-    let recommendation_ids = resolve_plan(&cmd.path, cmd)?;
+    let recommendation_ids = resolve_plan(&cmd.path, cmd, loaded.as_ref())?;
     let changes = build_changes(&cmd.path, &recommendation_ids)?;
     guardrails::validate(&[], changes.len() as u32)?;
 
@@ -129,11 +131,14 @@ pub fn validate_plan_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_plan(root: &Path, cmd: &ApplyCommand) -> Result<Vec<String>> {
+fn resolve_plan(
+    root: &Path,
+    cmd: &ApplyCommand,
+    preloaded_config: Option<&crate::types::config::HarnessConfig>,
+) -> Result<Vec<String>> {
     if cmd.plan_all {
-        let loaded = config::load_config(root)?;
-        let model = scan::discover(root, loaded.as_ref());
-        let report = analyze::analyze(&model, loaded.as_ref());
+        let model = scan::discover(root, preloaded_config);
+        let report = analyze::analyze(&model, preloaded_config);
         let ids = report
             .recommendations
             .into_iter()
