@@ -643,6 +643,72 @@ task_overlap_threshold = 0.80
 }
 
 #[test]
+fn analyze_writes_continuity_log_entries() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::create_dir_all(repo.path().join("docs/context")).expect("context dir should create");
+    fs::write(repo.path().join("AGENTS.md"), "# Agents\nmap").expect("agents should write");
+    fs::write(
+        repo.path().join("README.md"),
+        "Architecture reference: ARCHITECTURE.md",
+    )
+    .expect("readme should write");
+    fs::write(repo.path().join("ARCHITECTURE.md"), "# Architecture").expect("arch should write");
+    fs::write(repo.path().join("docs/context/INDEX.md"), "index").expect("index should write");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+
+[continuity]
+log_sampling = "all"
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("analyze").arg(repo.path()).assert().code(0);
+
+    let progress_path = repo.path().join(".harness/progress.md");
+    let content = fs::read_to_string(&progress_path).expect("progress log should be readable");
+    assert!(content.contains("feature: analyze"));
+    assert!(content.contains("action: complete"));
+}
+
+#[test]
+fn suggest_logs_milestones_even_when_progress_sampling_none() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[continuity]
+log_sampling = "none"
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("suggest").arg(repo.path()).assert().code(0);
+
+    let progress_path = repo.path().join(".harness/progress.md");
+    let content = fs::read_to_string(&progress_path).expect("progress log should be readable");
+    assert!(content.contains("feature: suggest"));
+    assert!(content.contains("action: complete"));
+}
+
+#[test]
 fn analyze_fails_on_invalid_config_weights() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");

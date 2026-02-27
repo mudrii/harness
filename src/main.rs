@@ -1,6 +1,7 @@
 mod analyze;
 mod cli;
 mod config;
+mod continuity;
 mod error;
 mod generator;
 mod guardrails;
@@ -36,6 +37,14 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, loaded.as_ref());
+            continuity_milestone(
+                &mut continuity_logger,
+                "analyze",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let mut harness_report = analyze::analyze(&model, loaded.as_ref());
 
@@ -52,6 +61,16 @@ fn run() -> Result<i32, HarnessError> {
             };
             let rendered = report::render(&harness_report, output_format)?;
             println!("{rendered}");
+            continuity_progress(
+                &mut continuity_logger,
+                "analyze",
+                "report_rendered",
+                &[
+                    format!("findings={}", harness_report.findings.len()),
+                    format!("recommendations={}", harness_report.recommendations.len()),
+                ],
+                "running",
+            );
 
             let has_blocking = harness_report
                 .findings
@@ -64,13 +83,21 @@ fn run() -> Result<i32, HarnessError> {
                 eprintln!("warning: no harness.toml found in {}", cmd.path.display());
             }
 
-            if has_blocking {
-                Ok(exit_code::BLOCKING)
+            let exit = if has_blocking {
+                exit_code::BLOCKING
             } else if missing_config || has_warnings {
-                Ok(exit_code::WARNINGS)
+                exit_code::WARNINGS
             } else {
-                Ok(exit_code::SUCCESS)
-            }
+                exit_code::SUCCESS
+            };
+            continuity_milestone(
+                &mut continuity_logger,
+                "analyze",
+                "complete",
+                &[format!("exit_code={exit}")],
+                "done",
+            );
+            Ok(exit)
         }
         cli::Commands::Suggest(cmd) => {
             if !cmd.path.exists() {
@@ -81,11 +108,26 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, loaded.as_ref());
+            continuity_milestone(
+                &mut continuity_logger,
+                "suggest",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let report = analyze::analyze(&model, loaded.as_ref());
 
             if report.recommendations.is_empty() {
                 println!("suggest: no recommendations");
+                continuity_milestone(
+                    &mut continuity_logger,
+                    "suggest",
+                    "complete",
+                    &[format!("exit_code={}", exit_code::SUCCESS)],
+                    "done",
+                );
                 return Ok(exit_code::SUCCESS);
             }
 
@@ -112,8 +154,25 @@ fn run() -> Result<i32, HarnessError> {
                 let plan = generator::manifest::SuggestPlan::new(ids);
                 let path = generator::manifest::write_plan(&cmd.path, &plan)?;
                 println!("plan file: {}", path.display());
+                continuity_progress(
+                    &mut continuity_logger,
+                    "suggest",
+                    "plan_exported",
+                    &[format!("plan={}", path.display())],
+                    "running",
+                );
             }
 
+            continuity_milestone(
+                &mut continuity_logger,
+                "suggest",
+                "complete",
+                &[
+                    format!("recommendations={}", report.recommendations.len()),
+                    format!("exit_code={}", exit_code::SUCCESS),
+                ],
+                "done",
+            );
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Init(cmd) => {
@@ -124,6 +183,15 @@ fn run() -> Result<i32, HarnessError> {
                     std::fs::create_dir_all(&cmd.path).map_err(HarnessError::Io)?;
                 }
             }
+
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, None);
+            continuity_milestone(
+                &mut continuity_logger,
+                "init",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
 
             let profile = match cmd.profile {
                 cli::Profile::General => "general",
@@ -149,20 +217,51 @@ fn run() -> Result<i32, HarnessError> {
 
             if cmd.dry_run {
                 println!("dry-run: no files were written");
+                continuity_milestone(
+                    &mut continuity_logger,
+                    "init",
+                    "complete",
+                    &[
+                        "dry_run=true".to_string(),
+                        format!("exit_code={}", exit_code::SUCCESS),
+                    ],
+                    "done",
+                );
                 return Ok(exit_code::SUCCESS);
             }
 
             for (path, content) in files {
                 if path.exists() && cmd.no_overwrite {
                     println!("skip existing: {}", path.display());
+                    continuity_progress(
+                        &mut continuity_logger,
+                        "init",
+                        "skip_existing",
+                        &[format!("file={}", path.display())],
+                        "running",
+                    );
                     continue;
                 }
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(HarnessError::Io)?;
                 }
                 std::fs::write(&path, content).map_err(HarnessError::Io)?;
+                continuity_progress(
+                    &mut continuity_logger,
+                    "init",
+                    "file_written",
+                    &[format!("file={}", path.display())],
+                    "running",
+                );
             }
             println!("init complete");
+            continuity_milestone(
+                &mut continuity_logger,
+                "init",
+                "complete",
+                &[format!("exit_code={}", exit_code::SUCCESS)],
+                "done",
+            );
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Apply(cmd) => {
@@ -172,8 +271,30 @@ fn run() -> Result<i32, HarnessError> {
             if !cmd.path.join(".git").exists() {
                 return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
             }
-            generator::writer::execute_apply(&cmd)?;
-            Ok(exit_code::SUCCESS)
+            match generator::writer::execute_apply(&cmd) {
+                Ok(()) => {
+                    let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, None);
+                    continuity_milestone(
+                        &mut continuity_logger,
+                        "apply",
+                        "complete",
+                        &[format!("exit_code={}", exit_code::SUCCESS)],
+                        "done",
+                    );
+                    Ok(exit_code::SUCCESS)
+                }
+                Err(error) => {
+                    let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, None);
+                    continuity_milestone(
+                        &mut continuity_logger,
+                        "apply",
+                        "failed",
+                        &[format!("error={}", error)],
+                        "blocked",
+                    );
+                    Err(error)
+                }
+            }
         }
         cli::Commands::Optimize(cmd) => {
             if !cmd.path.exists() {
@@ -184,6 +305,14 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, loaded.as_ref());
+            continuity_milestone(
+                &mut continuity_logger,
+                "optimize",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
             let thresholds = loaded
                 .as_ref()
                 .map(types::config::HarnessConfig::optimization_thresholds)
@@ -194,6 +323,17 @@ fn run() -> Result<i32, HarnessError> {
                 .clone()
                 .unwrap_or_else(|| cmd.path.join(".harness/traces"));
             let trace_data = scan_traces(&trace_dir, thresholds.trace_staleness_days)?;
+            continuity_progress(
+                &mut continuity_logger,
+                "optimize",
+                "trace_scanned",
+                &[
+                    format!("recent={}", trace_data.stats.recent),
+                    format!("stale={}", trace_data.stats.stale),
+                    format!("malformed={}", trace_data.stats.malformed),
+                ],
+                "running",
+            );
             let optimize_delta = compute_optimize_delta(&trace_data.recent, thresholds);
 
             let model = scan::discover(&cmd.path, loaded.as_ref());
@@ -212,6 +352,16 @@ fn run() -> Result<i32, HarnessError> {
             );
             std::fs::write(&out_path, content).map_err(HarnessError::Io)?;
             println!("optimize report: {}", out_path.display());
+            continuity_milestone(
+                &mut continuity_logger,
+                "optimize",
+                "complete",
+                &[
+                    format!("status={:?}", optimize_delta.status),
+                    format!("exit_code={}", exit_code::SUCCESS),
+                ],
+                "done",
+            );
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Bench(cmd) => {
@@ -223,6 +373,14 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, loaded.as_ref());
+            continuity_milestone(
+                &mut continuity_logger,
+                "bench",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let mut run_results = Vec::new();
             for run_index in 0..cmd.runs {
@@ -232,6 +390,13 @@ fn run() -> Result<i32, HarnessError> {
                     overall_score: report.overall_score,
                 });
             }
+            continuity_progress(
+                &mut continuity_logger,
+                "bench",
+                "runs_completed",
+                &[format!("runs={}", run_results.len())],
+                "running",
+            );
 
             let context = BenchContext {
                 os: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
@@ -267,6 +432,16 @@ fn run() -> Result<i32, HarnessError> {
 
             let report_path = write_bench_report(&cmd.path, &report)?;
             println!("bench report: {}", report_path.display());
+            continuity_milestone(
+                &mut continuity_logger,
+                "bench",
+                "complete",
+                &[
+                    format!("report={}", report_path.display()),
+                    format!("exit_code={}", exit_code::SUCCESS),
+                ],
+                "done",
+            );
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Lint(cmd) => {
@@ -278,11 +453,26 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let mut continuity_logger = continuity::ContinuityLogger::new(&cmd.path, loaded.as_ref());
+            continuity_milestone(
+                &mut continuity_logger,
+                "lint",
+                "start",
+                &[format!("path={}", cmd.path.display())],
+                "running",
+            );
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let findings = analyze::lint::lint_findings(&model, loaded.as_ref());
 
             if findings.is_empty() {
                 println!("lint: no findings");
+                continuity_milestone(
+                    &mut continuity_logger,
+                    "lint",
+                    "complete",
+                    &[format!("exit_code={}", exit_code::SUCCESS)],
+                    "done",
+                );
                 return Ok(exit_code::SUCCESS);
             }
 
@@ -292,12 +482,51 @@ fn run() -> Result<i32, HarnessError> {
                 println!("  {}", finding.body);
             }
 
-            if findings.iter().any(|finding| finding.blocking) {
-                Ok(exit_code::BLOCKING)
+            let exit = if findings.iter().any(|finding| finding.blocking) {
+                exit_code::BLOCKING
             } else {
-                Ok(exit_code::WARNINGS)
-            }
+                exit_code::WARNINGS
+            };
+            continuity_progress(
+                &mut continuity_logger,
+                "lint",
+                "findings_emitted",
+                &[format!("findings={}", findings.len())],
+                "running",
+            );
+            continuity_milestone(
+                &mut continuity_logger,
+                "lint",
+                "complete",
+                &[format!("exit_code={exit}")],
+                "done",
+            );
+            Ok(exit)
         }
+    }
+}
+
+fn continuity_milestone(
+    logger: &mut continuity::ContinuityLogger,
+    feature: &str,
+    action: &str,
+    evidence: &[String],
+    next_state: &str,
+) {
+    if let Err(error) = logger.record_milestone(feature, action, evidence, next_state) {
+        eprintln!("warning: continuity milestone logging failed: {}", error);
+    }
+}
+
+fn continuity_progress(
+    logger: &mut continuity::ContinuityLogger,
+    feature: &str,
+    action: &str,
+    evidence: &[String],
+    next_state: &str,
+) {
+    if let Err(error) = logger.record_progress(feature, action, evidence, next_state) {
+        eprintln!("warning: continuity progress logging failed: {}", error);
     }
 }
 
