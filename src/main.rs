@@ -175,7 +175,27 @@ fn run() -> Result<i32, HarnessError> {
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Optimize(cmd) => {
-            println!("optimize requested for {}", cmd.path.display());
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+
+            let loaded = config::load_config(&cmd.path)?;
+            let model = scan::discover(&cmd.path, loaded.as_ref());
+            let report = analyze::analyze(&model, loaded.as_ref());
+
+            let out_dir = cmd
+                .trace_dir
+                .clone()
+                .unwrap_or_else(|| cmd.path.join(".harness/optimize"));
+            std::fs::create_dir_all(&out_dir).map_err(HarnessError::Io)?;
+            let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+            let out_path = out_dir.join(format!("optimize-{stamp}.md"));
+            let content = render_optimize_report(&report);
+            std::fs::write(&out_path, content).map_err(HarnessError::Io)?;
+            println!("optimize report: {}", out_path.display());
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Bench(cmd) => {
@@ -375,6 +395,34 @@ fn write_bench_report(
     let payload = serde_json::to_string_pretty(report)?;
     std::fs::write(&out, payload).map_err(HarnessError::Io)?;
     Ok(out)
+}
+
+fn render_optimize_report(report: &types::report::HarnessReport) -> String {
+    let mut lines = vec![
+        "# Harness Optimize Report".to_string(),
+        String::new(),
+        format!("Overall score: {:.3}", report.overall_score),
+        String::new(),
+        "## Top Recommendations".to_string(),
+    ];
+
+    if report.recommendations.is_empty() {
+        lines.push("- No recommendations available.".to_string());
+    } else {
+        for recommendation in report.recommendations.iter().take(10) {
+            lines.push(format!(
+                "- `{}`: {} (impact: {:?}, effort: {:?}, risk: {:?}, confidence: {:.2})",
+                recommendation.id,
+                recommendation.summary,
+                recommendation.impact,
+                recommendation.effort,
+                recommendation.risk,
+                recommendation.confidence
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
 }
 
 fn main() {
