@@ -147,4 +147,50 @@ profile = "agent"
             Some(0.20)
         );
     }
+
+    #[test]
+    fn load_config_reports_malformed_global_toml_with_path() {
+        let root = TempDir::new().expect("root temp dir should be created");
+        let global_root = TempDir::new().expect("global temp dir should be created");
+        let global_path = global_root.path().join("config.toml");
+
+        fs::write(&global_path, "[project").expect("global config should write");
+        fs::write(
+            root.path().join(DEFAULT_CONFIG_FILE),
+            r#"
+[project]
+name = "repo"
+profile = "general"
+"#,
+        )
+        .expect("repo config should write");
+
+        let err = load_config_with_global(root.path(), Some(&global_path))
+            .expect_err("load should fail");
+        let message = err.to_string();
+        assert!(message.contains("config parse error"));
+        assert!(message.contains(&global_path.display().to_string()));
+    }
+
+    #[test]
+    fn load_config_reports_malformed_local_override_with_path() {
+        let root = TempDir::new().expect("root temp dir should be created");
+        fs::write(
+            root.path().join(DEFAULT_CONFIG_FILE),
+            r#"
+[project]
+name = "repo"
+profile = "general"
+"#,
+        )
+        .expect("repo config should write");
+        fs::create_dir_all(root.path().join(".harness")).expect("local harness dir should create");
+        let local_path = root.path().join(DEFAULT_LOCAL_FILE);
+        fs::write(&local_path, "[project").expect("local config should write");
+
+        let err = load_config_with_global(root.path(), None).expect_err("load should fail");
+        let message = err.to_string();
+        assert!(message.contains("config parse error"));
+        assert!(message.contains(&local_path.display().to_string()));
+    }
 }

@@ -219,6 +219,27 @@ impl HarnessConfig {
         }
 
         if let Some(metrics) = &self.metrics {
+            if let Some(weights) = &metrics.weights {
+                const ALLOWED_WEIGHT_KEYS: [&str; 5] = [
+                    "context",
+                    "tools",
+                    "continuity",
+                    "verification",
+                    "repository_quality",
+                ];
+                let unknown = weights
+                    .keys()
+                    .filter(|key| !ALLOWED_WEIGHT_KEYS.contains(&key.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !unknown.is_empty() {
+                    return Err(HarnessError::ConfigParse(format!(
+                        "metrics.weights contains unknown key(s): {}",
+                        unknown.join(", ")
+                    )));
+                }
+            }
+
             if let Some(max_risk_tolerance) = metrics.max_risk_tolerance {
                 if !(0.0..=1.0).contains(&max_risk_tolerance) {
                     return Err(HarnessError::ConfigParse(
@@ -474,5 +495,52 @@ min_traces = 0
             err.to_string()
                 .contains("optimization.min_traces must be greater than 0")
         );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_metrics_weight_keys() {
+        let toml_str = r#"
+[project]
+name = "test"
+
+[metrics.weights]
+context = 0.30
+tools = 0.25
+continuity = 0.20
+verification = 0.15
+repository_quality = 0.10
+unknown_bucket = 0.01
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.to_string().contains("unknown key"));
+        assert!(err.to_string().contains("unknown_bucket"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_project_profile() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "ops"
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.to_string().contains("unsupported project.profile"));
+    }
+
+    #[test]
+    fn validate_accepts_metric_boundaries() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "general"
+
+[metrics]
+max_risk_tolerance = 1.0
+max_penalty_per_bucket = 0.0
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        assert!(cfg.validate().is_ok());
     }
 }

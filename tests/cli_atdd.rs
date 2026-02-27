@@ -164,6 +164,114 @@ loop_guard_enabled = true
 }
 
 #[test]
+fn analyze_fails_on_malformed_repo_config() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::write(repo.path().join("harness.toml"), "[project").expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("analyze")
+        .arg(repo.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("config parse error"));
+}
+
+#[test]
+fn analyze_fails_on_invalid_project_profile() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "ops"
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("analyze")
+        .arg(repo.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("unsupported project.profile"));
+}
+
+#[test]
+fn analyze_uses_repo_config_over_invalid_global_profile() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+    )
+    .expect("repo config should write");
+
+    let fake_home = TempDir::new().expect("temp home should be created");
+    let global_config_dir = fake_home.path().join(".config/harness");
+    fs::create_dir_all(&global_config_dir).expect("global config dir should create");
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"
+[project]
+name = "global"
+profile = "invalid-profile"
+"#,
+    )
+    .expect("global config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.env("HOME", fake_home.path())
+        .arg("analyze")
+        .arg(repo.path())
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("no harness.toml").not());
+}
+
+#[test]
+fn analyze_uses_local_override_over_repo_profile() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+"#,
+    )
+    .expect("repo config should write");
+    fs::create_dir_all(repo.path().join(".harness")).expect("local dir should create");
+    fs::write(
+        repo.path().join(".harness/local.toml"),
+        r#"
+[project]
+profile = "ops"
+"#,
+    )
+    .expect("local override should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("analyze")
+        .arg(repo.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("unsupported project.profile"));
+}
+
+#[test]
 fn lint_returns_warning_when_git_repo_has_no_repo_config() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");

@@ -1145,6 +1145,20 @@ fn render_optimize_report(
     lines.join("\n")
 }
 
+fn main() {
+    match run() {
+        Ok(code) => {
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(exit_code::RUNTIME_FAILURE);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1425,19 +1439,5 @@ mod tests {
             },
         ];
         assert!((average_overall_score(&runs) - 0.7).abs() < 0.001);
-    }
-}
-
-fn main() {
-    match run() {
-        Ok(code) => {
-            if code != 0 {
-                std::process::exit(code);
-            }
-        }
-        Err(e) => {
-            eprintln!("error: {}", e);
-            std::process::exit(exit_code::RUNTIME_FAILURE);
-        }
     }
 }
