@@ -124,7 +124,7 @@ Output:
 
 Required flags:
 - `--format {json,md,sarif}`
-- `--min-impact {safe|all}`
+- `--min-impact {safe|all}` (validated by `MinImpact` enum via `clap::ValueEnum`)
 
 ### 4.3 `harness suggest <path>`
 
@@ -151,8 +151,8 @@ Preconditions (checked in order before any writes):
 5. Explicit `y/N` confirmation in apply mode (skipped in preview mode or with `--yes`).
 
 Required flags:
-- `--plan-file path` or `--plan all`.
-- `--apply-mode {preview,apply}`
+- `--plan-file path` or `--plan-all`.
+- `--apply-mode {preview,apply}` (validated by `ApplyMode` enum via `clap::ValueEnum`)
 - `--allow-dirty` (skip clean working tree check)
 - `--yes` / `-y` (skip confirmation prompt)
 
@@ -214,11 +214,11 @@ doc_map_required = true
 
 [tools.baseline]
 read = ["bash", "ls", "find", "cat", "rg", "git"]
-write = ["apply_patch", "cat > file"]
+write = ["apply_patch", "tee"] # exclusively executable names, no shell redirects or args
 forbidden = ["sudo", "ssh", "nc", "mkfs", "fdisk"]
 
 [tools.specialized]
-extra = [] # examples: {name = "search", command = "./scripts/search.sh"}
+extra = [] # strictly single executable names (e.g. "deploy")
 
 [tools.deprecated]
 observe = []      # Phase 1: allowed, non-blocking warning in report
@@ -281,6 +281,14 @@ replan_on_loop = true
   ]
 }
 ```
+
+State transitions (v1, schema version 1):
+- in_progress → done (evidence provided)
+- in_progress → blocked (blocker identified)
+- blocked → in_progress (blocker resolved)
+
+Note: A 5-state model (idle → planning → coding → verifying → done/blocked)
+is designed for v1.1 (schema version 2) when trace-driven state detection is available.
 
 ## 6) Scanner design (what gets analyzed)
 
@@ -447,6 +455,25 @@ Statistical gates (all configurable via `[optimization]` manifest section):
 - Token/step recommendations require `|Δ| ≥ min_uplift_rel` (default 0.10, i.e., 10%).
 - Paired comparisons require `task_overlap_threshold` (default 0.50) overlap on the same task set.
 - Traces older than `trace_staleness_days` (default 90) are excluded.
+
+Direction semantics:
+- Completion rate: Δ > 0 is improvement (higher is better).
+- Token/step count: Δ < 0 is improvement (lower is better).
+- The |Δ| gate triggers on magnitude in either direction.
+- Positive changes produce "improvement" recommendations.
+- Negative changes produce "regression" warnings.
+
+Trace record schema (v1.1):
+- task_id: string (format: "<feature>/<subtask>", e.g., "auth/login-form")
+- revision: string (harness config hash at time of trace)
+- outcome: "success" | "failure" | "timeout"
+- steps: u32
+- tool_calls: u32
+- token_est: u64
+- wall_ms: u64
+- timestamp: ISO 8601
+
+Task overlap is computed as |intersection(tasks_A, tasks_B)| / |union(tasks_A, tasks_B)|.
 
 Acceptance criterion for every change:
 - no negative regression in completion rate for top 10 representative tasks.

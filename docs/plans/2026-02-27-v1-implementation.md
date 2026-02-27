@@ -1,7 +1,5 @@
 # Harness v1.0 Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Implement the `harness analyze` command end-to-end as the first working vertical slice — config loading, scanning, scoring, and report rendering.
 
 **Architecture:** Layered pipeline: CLI dispatches to config loader → scanner (builds RepoModel) → analyzer (produces ScoreCard) → reporter (renders JSON/Markdown). Each layer is pure/deterministic except the scanner which reads the filesystem and git.
@@ -37,6 +35,15 @@ pub enum HarnessError {
 
     #[error("path does not exist: {0}")]
     PathNotFound(String),
+
+    #[error("invalid profile target: {0}")]
+    InvalidProfileTarget(String),
+
+    #[error("bucket penalty exceeded maximum: {0}")]
+    BucketPenaltyExceeded(String),
+
+    #[error("forbidden tool access attempt: {0}")]
+    ForbiddenToolAccess(String),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -226,6 +233,11 @@ pub struct ContinuityConfig {
     pub coding_prompt: Option<String>,
     pub progress_file: Option<String>,
     pub feature_state_file: Option<String>,
+    pub state_schema_version: Option<u32>,
+    pub log_sampling: Option<String>,
+    pub batch_interval_secs: Option<u32>,
+    pub max_log_size_kb: Option<u32>,
+    pub retained_logs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -465,6 +477,14 @@ mod tests {
     }
 
     #[test]
+    fn bucket_penalty_limit_enforced() {
+        let mut builder = CategoryScoreBuilder::new(1.0);
+        builder.add_penalty(0.60); // Exceeds max
+        let score = builder.build(0.40);
+        assert!((score - 0.60).abs() < 0.001); // 1.0 - 0.40 = 0.60
+    }
+
+    #[test]
     fn weighted_overall_sums_correctly() {
         let weights = [0.30, 0.25, 0.20, 0.15, 0.10];
         let card = ScoreCard::new(1.0, 1.0, 1.0, 1.0, 1.0);
@@ -492,6 +512,24 @@ Expected: FAIL — `ScoreCard::new` not defined
 ```rust
 // src/types/scoring.rs
 pub type Score = f32;
+
+#[derive(Debug, Clone)]
+pub struct CategoryScoreBuilder {
+    pub base: f32,
+    pub bonuses: f32,
+    pub penalties: f32,
+}
+
+impl CategoryScoreBuilder {
+    pub fn new(base: f32) -> Self {
+        Self { base, bonuses: 0.0, penalties: 0.0 }
+    }
+    pub fn add_bonus(&mut self, val: f32) { self.bonuses += val; }
+    pub fn add_penalty(&mut self, val: f32) { self.penalties += val; }
+    pub fn build(&self, max_penalty: f32) -> f32 {
+        (self.base + self.bonuses - self.penalties.min(max_penalty)).clamp(0.0, 1.0)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ScoreCard {
@@ -1100,7 +1138,13 @@ cli::Commands::Analyze(cmd) => {
     }
     let config = config::load_config(root);
     let model = scan::discover(root);
-    let report = analyze::analyze(&model, &config);
+    let mut report = analyze::analyze(&model, &config);
+    
+    // Filter recommendations by min-impact
+    if let Some(min) = &cmd.min_impact {
+        report.recommendations.retain(|r| r.impact >= *min);
+    }
+
     match cmd.format {
         cli::ReportFormat::Json => println!("{}", report::json::to_json(&report)),
         cli::ReportFormat::Md => println!("{}", report::md::to_markdown(&report)),
@@ -1174,15 +1218,33 @@ Add to Cargo.toml dev-deps: `assert_cmd = "2"` and `predicates = "3"`.
 ```rust
 use std::collections::HashMap;
 
+pub enum ToolStatus {
+    Allowed,
+    Observe,
+    Deprecated,
+    Disabled,
+}
+
 pub struct CommandPolicy {
-    pub forbidden: Vec<String>,
+    pub observe: Vec<String>,
+    pub deprecated: Vec<String>,
+    pub disabled: Vec<String>,
     pub aliases: HashMap<String, String>,
 }
 
 impl CommandPolicy {
-    pub fn is_forbidden(&self, cmd: &str) -> bool {
+    pub fn check_tool(&self, cmd: &str) -> ToolStatus {
         let expanded = self.expand_aliases(cmd);
-        self.forbidden.iter().any(|f| expanded.starts_with(f))
+        if self.disabled.iter().any(|f| expanded.starts_with(f)) {
+            return ToolStatus::Disabled;
+        }
+        if self.deprecated.iter().any(|f| expanded.starts_with(f)) {
+            return ToolStatus::Deprecated;
+        }
+        if self.observe.iter().any(|f| expanded.starts_with(f)) {
+            return ToolStatus::Observe;
+        }
+        ToolStatus::Allowed
     }
 
     fn expand_aliases(&self, cmd: &str) -> String {
@@ -1208,18 +1270,182 @@ impl CommandPolicy {
 
 ---
 
-## Deferred to v1.1
+---
 
-The following are explicitly out of scope for this plan:
+## Phase 7: Scaffold and Write Mode (`init` and `apply`)
+
+### Task 16: Implement CLI Profile Validation Enum
+
+**Files:**
+- Modify: `src/cli.rs`
+
+Replace `String` profile types with a `clap::ValueEnum`.
+
+```rust
+use clap::ValueEnum;
+
+#[derive(Clone, ValueEnum, Debug)]
+pub enum Profile {
+    General,
+    Agent,
+}
+```
+Update all config generation and validation paths to depend on this strict profile type.
+
+### Task 17: Implement Init & Apply Commands (V1 Scope)
+
+**Files:**
+- Modify: `src/generator/writer.rs`
+- Modify: `src/cli.rs`
+
+Implement the preconditions for the `apply` command:
+1. Check clean working tree (unless `--allow-dirty`).
+2. Rollback manifest logic (`.harness/rollback/<timestamp>.json`).
+3. Confirmation prompts.
+
+These are confirmed to be strictly within the v1 scope.
+
+---
+
+## Module Readiness Tracker
+
+| Module | Status | Task | Dependencies |
+|--------|--------|------|-------------|
+| error | pending | Task 1 | none |
+| types/config | pending | Task 2 | none |
+| config | pending | Task 3 | Task 2 |
+| types/scoring | pending | Task 4 | none |
+| types/report | pending | Task 5 | Task 4 |
+| scan/mod | pending | Task 6 | Tasks 7-10 |
+| scan/filesystem | pending | Task 7 | none |
+| scan/docs | pending | Task 8 | none |
+| scan/git_meta | pending | Task 9 | none |
+| scan/tools | pending | Task 10 | Task 2 |
+| analyze/* | pending | Task 11 | Tasks 4, 6 |
+| main (wiring) | pending | Task 12 | Tasks 11, 13 |
+| report/json,md | pending | Task 13 | Task 5 |
+| git gate | pending | Task 14 | Task 12 |
+| guardrails/policy | pending | Task 15 | Task 2 |
+| cli (enums) | pending | Task 16 | none |
+| main (exit codes) | done | Task 17 | none |
+
+Status values: pending | in-progress | done | blocked
+
+---
+
+## Deferred to later v1.0 milestones
+
+The following are correctly in v1 scope but purposefully excluded from this *first vertical slice implementation plan*. They will be covered in subsequent implementation plans following milestone M1:
 - `harness optimize` command (trace module)
 - `harness bench` command (benchmark module)
-- `harness init` command implementation (generator/writer)
-- `harness apply` command implementation (generator/writer + rollback)
 - `harness suggest` command (recommendation engine)
+
+## Deferred to v1.1
+
+The following are explicitly outside the v1 release scope:
 - SARIF report format
 - `ops` and `strict` profiles
 - Namespace-based tool classification
 - CI/CD pipeline
+
+---
+
+## Mandatory: TDD, ATDD, Unit Testing, and Linting
+
+Every task in this plan MUST follow strict TDD and ATDD methodology. This is non-negotiable.
+
+### TDD Rules (Unit Level)
+
+1. **Red-Green-Refactor cycle is mandatory:**
+   - Write a failing test first that defines the expected behavior
+   - Run the test, confirm it fails for the right reason
+   - Write the minimum code to make the test pass
+   - Run the test, confirm it passes
+   - Refactor if needed, re-run tests
+
+2. **Minimum test coverage per module:**
+
+   | Module | Required Tests |
+   |--------|---------------|
+   | `error.rs` | 1: error variant display messages |
+   | `types/config.rs` | 3: minimal parse, full parse, default weights |
+   | `config.rs` | 2: load existing config, missing config returns None |
+   | `types/scoring.rs` | 4: clamp valid, clamp overflow, weighted sum, finalize |
+   | `types/report.rs` | 1: recommendation sorting |
+   | `scan/filesystem.rs` | 1: list files excluding .git/target |
+   | `scan/docs.rs` | 2: detect present signals, detect absent signals |
+   | `scan/tools.rs` | 2: count overlap clusters, no overlap |
+   | `scan/git_meta.rs` | (integration test only — requires git repo) |
+   | `analyze/*.rs` | 2-3 per scorer: full marks, zero marks, partial |
+   | `report/json.rs` | 1: valid JSON output |
+   | `report/md.rs` | 1: markdown contains expected sections |
+   | `guardrails/command_policy.rs` | 4: forbidden match, alias expansion, args-aware, safe pass |
+   | `cli.rs` | 3: valid enum parse, invalid enum rejection, default values |
+
+3. **Test naming convention:** `test_<behavior_under_test>`, e.g., `test_clamp_caps_negative_scores`
+
+4. **No implementation code without a corresponding test.** If you can't write a test first, you don't understand the requirement well enough.
+
+### ATDD Rules (Acceptance Level)
+
+Each phase has an end-to-end acceptance test that verifies user-visible behavior:
+
+| Phase | Acceptance Test |
+|-------|----------------|
+| Phase 1 (Foundation) | `cargo test` passes, all config types deserialize, ScoreCard math is correct |
+| Phase 2 (Scanner) | `scan::discover()` returns a populated RepoModel for a real git repo |
+| Phase 3 (Analyzer) | `analyze::analyze()` returns a report with 5 non-zero scores |
+| Phase 4 (Reports) | `harness analyze . --format json` produces valid JSON with correct structure |
+| Phase 5 (Git Gate) | `harness analyze /tmp/non-git-dir` exits with code 3 |
+| Phase 6 (Policy) | Command policy correctly blocks aliased forbidden commands |
+
+Integration tests live in `tests/`:
+- `tests/integration.rs` — binary-level tests using `assert_cmd` + `predicates`
+- `tests/fixtures/` — test data (minimal git repos, sample configs)
+
+### Linting Rules (Mandatory)
+
+1. **`cargo clippy` must pass with no warnings** before any commit:
+   - Run: `cargo clippy -- -D warnings`
+   - Fix all warnings before committing
+   - Common clippy issues to watch for: `needless_return`, `redundant_clone`, `unused_imports`
+
+2. **`cargo fmt --check` must pass** before any commit:
+   - All code must be formatted with `rustfmt`
+   - Run: `cargo fmt` to auto-format, then `cargo fmt --check` to verify
+
+3. **Pre-commit verification sequence** (run in this order):
+   ```
+   cargo fmt --check
+   cargo clippy -- -D warnings
+   cargo test
+   cargo build
+   ```
+
+4. **No `#[allow(dead_code)]` without justification** — stub modules may have dead code during development, but each `allow` must be removed when the module is implemented.
+
+### Test Infrastructure
+
+Dev dependencies (add to Cargo.toml):
+```toml
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+```
+
+Test organization:
+- Unit tests: `#[cfg(test)] mod tests` at bottom of each source file
+- Integration tests: `tests/integration.rs`
+- Test fixtures: `tests/fixtures/` (created by test setup, not committed)
+
+### Testing Anti-Patterns to Avoid
+
+- No `#[ignore]` tests without a documented reason
+- No tests that depend on external network access
+- No tests that depend on specific filesystem paths outside tempdir
+- No tests that mutate global state
+- No assertion-free tests (every test must assert something meaningful)
 
 ---
 

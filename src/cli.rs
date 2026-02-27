@@ -25,6 +25,18 @@ pub enum Profile {
     Agent,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum MinImpact {
+    Safe,
+    All,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ApplyMode {
+    Preview,
+    Apply,
+}
+
 #[derive(Args)]
 pub struct InitCommand {
     pub path: PathBuf,
@@ -41,8 +53,8 @@ pub struct AnalyzeCommand {
     pub path: PathBuf,
     #[arg(short, long, value_enum, default_value = "md")]
     pub format: ReportFormat,
-    #[arg(long, default_value = "all")]
-    pub min_impact: String,
+    #[arg(long, value_enum, default_value = "all")]
+    pub min_impact: MinImpact,
 }
 
 #[derive(Args)]
@@ -57,8 +69,10 @@ pub struct ApplyCommand {
     pub path: PathBuf,
     #[arg(long)]
     pub plan_file: Option<String>,
-    #[arg(long, default_value = "preview")]
-    pub apply_mode: String,
+    #[arg(long)]
+    pub plan_all: bool,
+    #[arg(long, value_enum, default_value = "preview")]
+    pub apply_mode: ApplyMode,
     #[arg(long)]
     pub allow_dirty: bool,
     #[arg(long, short)]
