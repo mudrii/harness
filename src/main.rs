@@ -13,6 +13,7 @@ mod types;
 
 use crate::error::HarnessError;
 use clap::Parser;
+use serde::Serialize;
 
 pub mod exit_code {
     pub const SUCCESS: i32 = 0;
@@ -178,7 +179,40 @@ fn run() -> Result<i32, HarnessError> {
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Bench(cmd) => {
-            println!("bench requested for {}", cmd.path.display());
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+
+            let loaded = config::load_config(&cmd.path)?;
+            let model = scan::discover(&cmd.path, loaded.as_ref());
+            let mut run_results = Vec::new();
+            for run_index in 0..cmd.runs {
+                let report = analyze::analyze(&model, loaded.as_ref());
+                run_results.push(BenchRunResult {
+                    run: run_index + 1,
+                    overall_score: report.overall_score,
+                });
+            }
+
+            let context = BenchContext {
+                os: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+                toolchain: detect_toolchain(),
+                repo_ref: detect_repo_ref(&cmd.path),
+                repo_dirty: detect_repo_dirty(&cmd.path),
+                harness_version: env!("CARGO_PKG_VERSION").to_string(),
+                suite: cmd.suite.clone().unwrap_or_else(|| "default".to_string()),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+
+            let report = BenchReport {
+                bench_context: context,
+                runs: run_results,
+            };
+            let report_path = write_bench_report(&cmd.path, &report)?;
+            println!("bench report: {}", report_path.display());
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Lint(cmd) => {
@@ -267,6 +301,80 @@ fn init_context_index() -> &'static str {
 - AGENTS.md
 - harness.toml
 "#
+}
+
+#[derive(Debug, Serialize)]
+struct BenchContext {
+    os: String,
+    toolchain: String,
+    repo_ref: String,
+    repo_dirty: bool,
+    harness_version: String,
+    suite: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchRunResult {
+    run: u32,
+    overall_score: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchReport {
+    bench_context: BenchContext,
+    runs: Vec<BenchRunResult>,
+}
+
+fn detect_toolchain() -> String {
+    let output = std::process::Command::new("rustc")
+        .arg("--version")
+        .output();
+    match output {
+        Ok(result) if result.status.success() => {
+            String::from_utf8_lossy(&result.stdout).trim().to_string()
+        }
+        _ => "unknown".to_string(),
+    }
+}
+
+fn detect_repo_ref(root: &std::path::Path) -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output();
+    match output {
+        Ok(result) if result.status.success() => {
+            String::from_utf8_lossy(&result.stdout).trim().to_string()
+        }
+        _ => "unknown".to_string(),
+    }
+}
+
+fn detect_repo_dirty(root: &std::path::Path) -> bool {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root)
+        .output();
+    match output {
+        Ok(result) if result.status.success() => {
+            !String::from_utf8_lossy(&result.stdout).trim().is_empty()
+        }
+        _ => true,
+    }
+}
+
+fn write_bench_report(
+    root: &std::path::Path,
+    report: &BenchReport,
+) -> Result<std::path::PathBuf, HarnessError> {
+    let dir = root.join(".harness/bench");
+    std::fs::create_dir_all(&dir).map_err(HarnessError::Io)?;
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let out = dir.join(format!("bench-{stamp}.json"));
+    let payload = serde_json::to_string_pretty(report)?;
+    std::fs::write(&out, payload).map_err(HarnessError::Io)?;
+    Ok(out)
 }
 
 fn main() {
