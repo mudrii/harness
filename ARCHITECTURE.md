@@ -75,9 +75,19 @@ flowchart TD
 - `analyze`: read-only diagnostics and score report.
 - `suggest`: return ranked change plan.
 - `apply`: emit or apply patches in dry-run/approve modes.
+  - **Preconditions (5-step sequence):**
+    1. Clean working tree check (unless `--allow-dirty`)
+    2. Plan file validation (exists, parses, no path traversal, version match)
+    3. Rollback manifest creation (`.harness/rollback/<timestamp>.json`)
+    4. Change scope summary (modified/created/deleted file counts)
+    5. Confirmation prompt (`y/N`, skipped with `--yes` or in preview mode)
+  - **Selector:** Exactly one of `--plan-file <path>` or `--plan-all` is required (mutually exclusive).
 - `optimize`: compare harness revisions using trace and benchmark deltas.
 - `bench`: run benchmark suite and capture run metrics.
 - `lint`: verify conformance to selected harness profile.
+  - Checks required files exist per active profile.
+  - Validates tool configurations against forbidden/deprecated policy.
+  - Returns exit code 2 for blocking violations, 1 for warnings, 0 for clean.
 
 ## 6. Data contracts (core)
 
@@ -126,6 +136,9 @@ sequenceDiagram
 - explicit opt-in for privileged actions.
 - dry-run default for changes.
 - no implicit writes in analyze/suggest modes.
+- **Tool deprecation lifecycle:** 3-phase (observe → deprecated → disabled) managed via `[tools.deprecated]` config. See PLAN.md §5.2 for phase behavior.
+- **Alias expansion:** command policy resolves aliases before matching (e.g., `grep` → `rg`).
+- **Apply rollback:** every `apply` creates a rollback manifest with SHA256 hashes before any file modification.
 
 ## 9. Exit behavior
 

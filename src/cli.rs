@@ -4,6 +4,14 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "harness", version, about = "AI agent harness analysis and optimization CLI")]
 pub struct Cli {
+    /// Increase verbosity (-v for info, -vv for debug)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
+    /// Suppress all output except errors
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

@@ -243,6 +243,13 @@ required = ["cargo check", "cargo test", "cargo fmt --check"]
 pre_completion_required = true
 loop_guard_enabled = true
 
+# Config list types:
+# - [tools.baseline] lists contain executable names only (e.g. "rg", "git").
+#   Argument-level restrictions are handled by the command policy layer.
+# - [verification].required lists contain full commands including arguments
+#   (e.g. "cargo test") because these are commands to be executed, not
+#   tool classifications to be matched against.
+
 [continuity]
 initializer = ".harness/initializer.prompt.md"
 coding_prompt = ".harness/coding.prompt.md"
@@ -255,6 +262,9 @@ max_log_size_kb = 100
 retained_logs = 3
 
 [optimization]
+# NOTE: Before milestone M4, [optimization] values are parsed and validated
+# but unused at runtime. `harness lint` emits an informational finding noting
+# that optimization features are not yet active.
 min_traces = 30                  # minimum traces per revision before recommendations
 min_uplift_abs = 0.05            # completion rate delta threshold (5pp)
 min_uplift_rel = 0.10            # token/step delta threshold (10%)
@@ -381,7 +391,11 @@ Normalization rules:
 - `+0.30` if pre-completion gate exists.
 - `+0.20` if loop guard exists.
 
-Repository quality: small bounded score from test placement, CI consistency, and build reproducibility.
+#### repository_quality_score (additive, start at 0.0)
+- `+0.35` if `has_test_directory` (tests/ or test/ directory exists with at least one file).
+- `+0.30` if `has_ci_config` (.github/workflows/, .gitlab-ci.yml, Jenkinsfile, or similar CI config exists).
+- `+0.20` if `has_lint_config` (clippy.toml, .eslintrc, .pylintrc, rustfmt.toml, or similar linter config exists).
+- `+0.15` if `has_harness_config` (harness.toml exists at repo root).
 
 ### 7.3 Confidence scoring
 

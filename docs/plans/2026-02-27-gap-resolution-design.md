@@ -84,7 +84,7 @@ Behavior:
 - Below `task_overlap_threshold`: comparisons are rejected as incomparable
 - Beyond `trace_staleness_days`: traces are excluded from the current optimization cycle
 
-Implementation is deferred to v1.1 (trace module scope). This design documents the contract.
+Implementation is deferred to a later v1.0 milestone (M4). This design documents the contract.
 
 Direction semantics (added 2026-02-27):
 - Completion rate: Δ > 0 is improvement (higher is better).

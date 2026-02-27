@@ -4,7 +4,9 @@
 
 **Architecture:** Layered pipeline: CLI dispatches to config loader → scanner (builds RepoModel) → analyzer (produces ScoreCard) → reporter (renders JSON/Markdown). Each layer is pure/deterministic except the scanner which reads the filesystem and git.
 
-**Tech Stack:** Rust 2021 edition, clap 4.5, serde/toml for config, walkdir for filesystem, std::process::Command for git, thiserror for errors, anyhow for CLI-level error propagation.
+**Tech Stack:** Rust 2021 edition, clap 4.5, serde/toml for config, walkdir for filesystem, std::process::Command for git, thiserror for errors.
+
+> **Stub Replacement Note:** All existing stub files (35 files in types/, scan/, analyze/, optimization/, generator/, trace/, report/, guardrails/) contain placeholder signatures that will be replaced wholesale. The stubs exist to make the module tree compile; they do not represent the final API. Each task below provides the complete replacement code.
 
 ---
 
@@ -228,13 +230,21 @@ pub struct VerificationConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogSampling {
+    Milestones,
+    All,
+    None,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ContinuityConfig {
     pub initializer: Option<String>,
     pub coding_prompt: Option<String>,
     pub progress_file: Option<String>,
     pub feature_state_file: Option<String>,
     pub state_schema_version: Option<u32>,
-    pub log_sampling: Option<String>,
+    pub log_sampling: Option<LogSampling>,
     pub batch_interval_secs: Option<u32>,
     pub max_log_size_kb: Option<u32>,
     pub retained_logs: Option<u32>,
@@ -619,6 +629,10 @@ pub struct HarnessReport {
     pub category_scores: CategoryScores,
     pub findings: Vec<Finding>,
     pub recommendations: Vec<Recommendation>,
+    /// Non-fatal diagnostic messages from scanner/analyzer (e.g., parse failures
+    /// that degraded to partial results). Empty when everything parsed cleanly.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -730,6 +744,8 @@ git commit -m "feat: add HarnessReport, Finding, and recommendation sorting"
 ---
 
 ## Phase 2: Scanner Module
+
+> **Execution order:** Implement Tasks 7, 8, 9, 10 first (scanner sub-modules), then Task 6 (wiring in scan/mod.rs). Task 6 depends on the return types and functions defined in Tasks 7-10.
 
 ### Task 6: Implement RepoModel and Scanner Entry Point
 
@@ -1300,13 +1316,106 @@ Update all config generation and validation paths to depend on this strict profi
 **Files:**
 - Modify: `src/generator/writer.rs`
 - Modify: `src/cli.rs`
+- Modify: `src/main.rs`
 
-Implement the strict 5 preconditions for the `apply` command:
-1. Check clean working tree (unless `--allow-dirty`).
-2. Plan file validation: must exist, parse correctly, reject path traversal attempts, and match current harness version constraints.
-3. Rollback manifest generation (`.harness/rollback/<timestamp>.json` with file list + SHA256 hashes).
-4. Change scope summary: print detailed modification manifest to stdout before prompting.
-5. Explicit `y/N` confirmation prompts.
+**Step 1: Write failing tests for apply preconditions**
+
+```rust
+// src/generator/writer.rs — tests module
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_clean_tree_check_passes_on_clean_repo() {
+        let tmp = TempDir::new().unwrap();
+        std::process::Command::new("git")
+            .args(["init", tmp.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(check_clean_tree(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn test_clean_tree_check_fails_on_dirty_repo() {
+        let tmp = TempDir::new().unwrap();
+        std::process::Command::new("git")
+            .args(["init", tmp.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::fs::write(tmp.path().join("dirty.txt"), "change").unwrap();
+        assert!(check_clean_tree(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn test_plan_file_rejects_path_traversal() {
+        assert!(validate_plan_path("../../etc/passwd").is_err());
+        assert!(validate_plan_path("plans/good.json").is_ok());
+    }
+
+    #[test]
+    fn test_rollback_manifest_creation() {
+        let tmp = TempDir::new().unwrap();
+        let files = vec![("harness.toml".into(), "modify".into())];
+        let manifest = create_rollback_manifest(&files, "0.1.0");
+        assert_eq!(manifest.harness_version, "0.1.0");
+        assert_eq!(manifest.files.len(), 1);
+    }
+}
+```
+
+**Step 2: Run tests — verify they fail (functions don't exist yet)**
+
+**Step 3: Implement the functions**
+
+```rust
+use std::path::Path;
+use crate::error::HarnessError;
+
+/// Check that git working tree is clean (no uncommitted changes).
+pub fn check_clean_tree(root: &Path) -> Result<(), HarnessError> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| HarnessError::Io(e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        Ok(())
+    } else {
+        Err(HarnessError::ConfigParse(
+            "working tree is dirty; use --allow-dirty to override".into(),
+        ))
+    }
+}
+
+/// Reject plan file paths that attempt traversal.
+pub fn validate_plan_path(path: &str) -> Result<(), HarnessError> {
+    if path.contains("..") {
+        return Err(HarnessError::PathNotFound(
+            format!("path traversal rejected: {}", path),
+        ));
+    }
+    Ok(())
+}
+```
+
+**Step 4: Run tests — verify pass**
+
+```bash
+cargo test --lib generator::writer
+```
+
+**Step 5: Wire apply command in main.rs dispatch**
+
+Replace the mock `apply` arm with calls to `check_clean_tree`, `validate_plan_path`, `create_rollback_manifest`, scope summary, and confirmation.
+
+**Step 6: Commit**
+
+```bash
+git commit -m "feat: implement apply preconditions (clean tree, plan validation, rollback)"
+```
 
 Additionally, handle File writing logic:
 - Audit Headers: Every newly created markdown/configuration file must start with a `# Generated by harness` tracking header.
@@ -1318,22 +1427,267 @@ These are confirmed to be strictly within the v1 scope.
 
 **Files:**
 - Create: `src/analyze/lint.rs`
+- Modify: `src/analyze/mod.rs`
 - Modify: `src/main.rs`
 
-Implement the `harness lint` command to check policy conformance:
-1. Verify required foundational files exist as specified by the active profile.
-2. Confirm active tool configurations do not violate hard profile strictures (e.g., `forbidden` commands).
-3. Distinguish between blocking (returns exit code 2) and non-blocking warnings in the report stream.
+**Step 1: Write failing tests for lint checks**
+
+```rust
+// src/analyze/lint.rs — tests module
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_lint_missing_required_files_returns_blocking() {
+        let tmp = TempDir::new().unwrap();
+        // No harness.toml, no AGENTS.md → should produce blocking findings
+        let findings = lint_check(tmp.path(), &default_profile_requirements());
+        assert!(findings.iter().any(|f| f.severity == Severity::Blocking));
+    }
+
+    #[test]
+    fn test_lint_forbidden_tool_in_config() {
+        let config = test_config_with_forbidden_tool("sudo");
+        let findings = lint_tool_policy(&config);
+        assert!(findings.iter().any(|f| f.id.contains("forbidden")));
+    }
+
+    #[test]
+    fn test_lint_clean_repo_returns_no_blocking() {
+        let tmp = create_valid_repo_fixture();
+        let findings = lint_check(tmp.path(), &default_profile_requirements());
+        assert!(!findings.iter().any(|f| f.severity == Severity::Blocking));
+    }
+}
+```
+
+**Step 2: Run tests — verify failure**
+
+```bash
+cargo test --lib analyze::lint -- --nocapture
+```
+
+**Step 3: Implement lint_check and lint_tool_policy**
+
+```rust
+use std::path::Path;
+use crate::types::report::{Finding, Severity};
+
+pub fn lint_check(root: &Path, requirements: &ProfileRequirements) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    // Check required files exist
+    for file in &requirements.required_files {
+        if !root.join(file).exists() {
+            findings.push(Finding {
+                id: format!("missing-{}", file.replace('/', "-")),
+                title: format!("Required file missing: {}", file),
+                severity: Severity::Blocking,
+                // ...
+            });
+        }
+    }
+    findings
+}
+```
+
+**Step 4: Run tests — verify pass**
+
+**Step 5: Wire lint command in main.rs**
+
+Replace the mock `lint` arm with real `lint_check` invocation. Return exit code 2 if any blocking findings, 1 if warnings only, 0 if clean.
+
+**Step 6: Commit**
+
+```bash
+git commit -m "feat: implement lint command with profile-based file checks and tool policy"
+```
 
 ### Task 19: Global Exit Code Propagation
 
 **Files:**
 - Modify: `src/main.rs`
 
-Clean up the mock exits and propagate real command validation results:
-- Exit `1` explicitly mapped only for `Analyze` when non-blocking warnings surface.
-- Exit `2` mapped strictly to `Lint` findings or blocked preconditions.
-- Exit `3` tied rigorously to `HarnessError` bubbled up `Result` aborts.
+**Step 1: Write failing tests for exit code mapping**
+
+```rust
+// tests/integration.rs — add these tests
+#[test]
+fn analyze_valid_repo_exits_with_zero_or_one() {
+    // A valid git repo with good config → exit 0 (no findings) or 1 (warnings)
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::process::Command::new("git")
+        .args(["init", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let result = harness()
+        .args(["analyze", tmp.path().to_str().unwrap()])
+        .assert();
+    // Should not exit 3 (runtime failure)
+    result.code(predicate::ne(3));
+}
+
+#[test]
+fn lint_clean_repo_exits_zero() {
+    let tmp = create_fully_configured_fixture();
+    harness()
+        .args(["lint", tmp.path().to_str().unwrap()])
+        .assert()
+        .code(0);
+}
+```
+
+**Step 2: Run tests — verify failure (mock exits return wrong codes)**
+
+**Step 3: Replace mock exits with real command results**
+
+Clean up the mock exits in `main.rs` and propagate real command validation results:
+- Exit `0`: command succeeds with no findings
+- Exit `1`: `analyze` produces non-blocking warnings
+- Exit `2`: `lint` finds blocking violations or `apply` preconditions fail
+- Exit `3`: `HarnessError` bubbled up through `Result` abort
+
+**Step 4: Run tests — verify pass**
+
+```bash
+cargo test --test integration
+```
+
+**Step 5: Commit**
+
+```bash
+git commit -m "feat: wire real exit codes from analyze/lint results"
+```
+
+### Task 20: Config Validation
+
+**Files:**
+- Modify: `src/types/config.rs` (add `validate()` method)
+- Modify: `src/config.rs` (call validate after loading)
+
+**Step 1: Write failing tests for config validation**
+
+```rust
+// src/types/config.rs — tests module
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_config_passes_validation() {
+        let config = HarnessConfig {
+            metrics: Some(MetricsConfig {
+                weights: Some(hashmap! {
+                    "context" => 0.30, "tools" => 0.25,
+                    "continuity" => 0.20, "verification" => 0.15,
+                    "repository_quality" => 0.10,
+                }),
+                max_risk_tolerance: Some(0.35),
+                max_penalty_per_bucket: Some(0.40),
+            }),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_weights_not_summing_to_one_fails() {
+        let config = HarnessConfig {
+            metrics: Some(MetricsConfig {
+                weights: Some(hashmap! {
+                    "context" => 0.50, "tools" => 0.50,
+                    "continuity" => 0.50, "verification" => 0.50,
+                    "repository_quality" => 0.50,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_risk_tolerance_out_of_range_fails() {
+        let config = HarnessConfig {
+            metrics: Some(MetricsConfig {
+                max_risk_tolerance: Some(1.5), // > 1.0
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_penalty_bucket_out_of_range_fails() {
+        let config = HarnessConfig {
+            metrics: Some(MetricsConfig {
+                max_penalty_per_bucket: Some(-0.1), // < 0.0
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+}
+```
+
+**Step 2: Run tests — verify failure (validate() doesn't exist)**
+
+**Step 3: Implement validate()**
+
+```rust
+impl HarnessConfig {
+    /// Validate business invariants that serde can't enforce.
+    pub fn validate(&self) -> Result<(), HarnessError> {
+        if let Some(ref metrics) = self.metrics {
+            // Weights must sum to 1.0 (within floating-point tolerance)
+            if let Some(ref weights) = metrics.weights {
+                let sum: f32 = weights.values().sum();
+                if (sum - 1.0).abs() > 0.001 {
+                    return Err(HarnessError::ConfigParse(
+                        format!("metric weights must sum to 1.0, got {:.3}", sum),
+                    ));
+                }
+            }
+            // max_risk_tolerance must be in [0.0, 1.0]
+            if let Some(mrt) = metrics.max_risk_tolerance {
+                if !(0.0..=1.0).contains(&mrt) {
+                    return Err(HarnessError::ConfigParse(
+                        format!("max_risk_tolerance must be in [0.0, 1.0], got {}", mrt),
+                    ));
+                }
+            }
+            // max_penalty_per_bucket must be in [0.0, 1.0]
+            if let Some(mpb) = metrics.max_penalty_per_bucket {
+                if !(0.0..=1.0).contains(&mpb) {
+                    return Err(HarnessError::ConfigParse(
+                        format!("max_penalty_per_bucket must be in [0.0, 1.0], got {}", mpb),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+**Step 4: Run tests — verify pass**
+
+```bash
+cargo test --lib types::config
+```
+
+**Step 5: Wire validation into config loading (Task 12 integration)**
+
+After loading config in the analyze pipeline, call `config.validate()?` before proceeding.
+
+**Step 6: Commit**
+
+```bash
+git commit -m "feat: add config validation for weights sum, risk tolerance, penalty bounds"
+```
 
 ---
 
@@ -1360,6 +1714,7 @@ Clean up the mock exits and propagate real command validation results:
 | apply preconditions | pending | Task 17 | Task 3 |
 | analyze/lint | pending | Task 18 | Task 15 |
 | main (exit codes) | in-progress | Task 19 | none |
+| types/config (validate) | pending | Task 20 | Task 2 |
 
 Status values: pending | in-progress | done | blocked
 
@@ -1430,6 +1785,8 @@ Each phase has an end-to-end acceptance test that verifies user-visible behavior
 | Phase 4 (Reports) | `harness analyze . --format json` produces valid JSON with correct structure |
 | Phase 5 (Git Gate) | `harness analyze /tmp/non-git-dir` exits with code 3 |
 | Phase 6 (Policy) | Command policy correctly blocks aliased forbidden commands |
+| Phase 7 (Scaffold) | `harness apply --plan-file plan.json .` enforces preconditions; `harness lint .` produces findings; exit codes map correctly |
+| Config Validation | `HarnessConfig::validate()` rejects invalid weights/tolerances |
 
 Integration tests live in `tests/`:
 - `tests/integration.rs` — binary-level tests using `assert_cmd` + `predicates`

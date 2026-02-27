@@ -17,7 +17,8 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-anyhow = "1"
 
 [dev-dependencies]
-# kept minimal for v0.1 bootstrap
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"

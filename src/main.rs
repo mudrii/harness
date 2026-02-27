@@ -1,6 +1,15 @@
 mod cli;
 mod config;
 mod error;
+mod types;
+mod scan;
+mod analyze;
+mod report;
+mod guardrails;
+// Deferred modules (uncomment when implementing):
+// mod optimization;
+// mod generator;
+// mod trace;
 
 use clap::Parser;
 use crate::error::HarnessError;
