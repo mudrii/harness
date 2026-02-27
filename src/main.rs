@@ -14,6 +14,7 @@ mod types;
 use crate::error::HarnessError;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub mod exit_code {
     pub const SUCCESS: i32 = 0;
@@ -192,8 +193,8 @@ fn run() -> Result<i32, HarnessError> {
                 .trace_dir
                 .clone()
                 .unwrap_or_else(|| cmd.path.join(".harness/traces"));
-            let trace_scan =
-                count_recent_traces(&trace_dir, thresholds.trace_staleness_days)?;
+            let trace_data = scan_traces(&trace_dir, thresholds.trace_staleness_days)?;
+            let optimize_delta = compute_optimize_delta(&trace_data.recent, thresholds);
 
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let report = analyze::analyze(&model, loaded.as_ref());
@@ -204,9 +205,10 @@ fn run() -> Result<i32, HarnessError> {
             let out_path = out_dir.join(format!("optimize-{stamp}.md"));
             let content = render_optimize_report(
                 &report,
-                trace_scan,
-                thresholds.min_traces,
+                trace_data.stats,
+                thresholds,
                 &trace_dir,
+                &optimize_delta,
             );
             std::fs::write(&out_path, content).map_err(HarnessError::Io)?;
             println!("optimize report: {}", out_path.display());
@@ -476,6 +478,13 @@ fn validate_bench_compare_compatibility(
 #[derive(Debug, Deserialize)]
 struct TraceRecord {
     timestamp: String,
+    task_id: Option<String>,
+    revision: Option<String>,
+    outcome: Option<String>,
+    steps: Option<u32>,
+    tool_calls: Option<u32>,
+    token_est: Option<u64>,
+    wall_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -485,17 +494,130 @@ struct TraceScanStats {
     malformed: usize,
 }
 
-fn count_recent_traces(
-    trace_dir: &std::path::Path,
-    max_age_days: u32,
-) -> Result<TraceScanStats, HarnessError> {
+#[derive(Debug, Clone)]
+struct RecentTraceRecord {
+    timestamp: chrono::DateTime<chrono::Utc>,
+    task_id: String,
+    revision: String,
+    outcome: String,
+    steps: Option<u32>,
+    token_est: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct TraceData {
+    stats: TraceScanStats,
+    recent: Vec<RecentTraceRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OptimizeDeltaStatus {
+    Improvement,
+    Regression,
+    Neutral,
+    InsufficientData,
+}
+
+#[derive(Debug, Clone)]
+struct OptimizeDelta {
+    status: OptimizeDeltaStatus,
+    baseline_revision: Option<String>,
+    current_revision: Option<String>,
+    completion_delta: f32,
+    token_delta_rel: f32,
+    step_delta_rel: f32,
+    task_overlap: f32,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct RevisionAccumulator {
+    total: usize,
+    success: usize,
+    steps_sum: f64,
+    steps_count: usize,
+    tokens_sum: f64,
+    tokens_count: usize,
+    tasks: BTreeSet<String>,
+    latest_ts: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug)]
+struct RevisionMetrics {
+    revision: String,
+    total: usize,
+    completion_rate: f32,
+    avg_steps: f32,
+    avg_tokens: f32,
+    tasks: BTreeSet<String>,
+    latest_ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl RevisionAccumulator {
+    fn add(&mut self, trace: &RecentTraceRecord) {
+        self.total += 1;
+        if trace.outcome == "success" {
+            self.success += 1;
+        }
+        if let Some(steps) = trace.steps {
+            self.steps_sum += f64::from(steps);
+            self.steps_count += 1;
+        }
+        if let Some(token_est) = trace.token_est {
+            self.tokens_sum += token_est as f64;
+            self.tokens_count += 1;
+        }
+        self.tasks.insert(trace.task_id.clone());
+        self.latest_ts = Some(self.latest_ts.map_or(trace.timestamp, |current| {
+            if trace.timestamp > current {
+                trace.timestamp
+            } else {
+                current
+            }
+        }));
+    }
+
+    fn into_metrics(self, revision: String) -> Option<RevisionMetrics> {
+        let latest_ts = self.latest_ts?;
+        let completion_rate = if self.total == 0 {
+            0.0
+        } else {
+            self.success as f32 / self.total as f32
+        };
+        let avg_steps = if self.steps_count == 0 {
+            0.0
+        } else {
+            (self.steps_sum / self.steps_count as f64) as f32
+        };
+        let avg_tokens = if self.tokens_count == 0 {
+            0.0
+        } else {
+            (self.tokens_sum / self.tokens_count as f64) as f32
+        };
+        Some(RevisionMetrics {
+            revision,
+            total: self.total,
+            completion_rate,
+            avg_steps,
+            avg_tokens,
+            tasks: self.tasks,
+            latest_ts,
+        })
+    }
+}
+
+fn scan_traces(trace_dir: &std::path::Path, max_age_days: u32) -> Result<TraceData, HarnessError> {
     if !trace_dir.exists() {
-        return Ok(TraceScanStats::default());
+        return Ok(TraceData {
+            stats: TraceScanStats::default(),
+            recent: Vec::new(),
+        });
     }
 
     let now = chrono::Utc::now();
     let max_age = i64::from(max_age_days);
     let mut stats = TraceScanStats::default();
+    let mut recent = Vec::new();
 
     for entry_result in std::fs::read_dir(trace_dir).map_err(HarnessError::Io)? {
         let entry = entry_result.map_err(HarnessError::Io)?;
@@ -528,19 +650,177 @@ fn count_recent_traces(
             let age_days = now.signed_duration_since(timestamp).num_days();
             if age_days <= max_age {
                 stats.recent += 1;
+                if let (Some(task_id), Some(revision), Some(outcome)) =
+                    (record.task_id, record.revision, record.outcome)
+                {
+                    recent.push(RecentTraceRecord {
+                        timestamp,
+                        task_id,
+                        revision,
+                        outcome,
+                        steps: record.steps,
+                        token_est: record.token_est,
+                    });
+                }
             } else {
                 stats.stale += 1;
             }
         }
     }
-    Ok(stats)
+    Ok(TraceData { stats, recent })
+}
+
+fn count_recent_traces(
+    trace_dir: &std::path::Path,
+    max_age_days: u32,
+) -> Result<TraceScanStats, HarnessError> {
+    scan_traces(trace_dir, max_age_days).map(|data| data.stats)
+}
+
+fn compute_task_overlap(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
+    if a.is_empty() && b.is_empty() {
+        return 0.0;
+    }
+    let intersection = a.intersection(b).count() as f32;
+    let union = a.union(b).count() as f32;
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn relative_delta(baseline: f32, current: f32) -> f32 {
+    if baseline.abs() < f32::EPSILON {
+        0.0
+    } else {
+        (current - baseline) / baseline
+    }
+}
+
+fn compute_optimize_delta(
+    traces: &[RecentTraceRecord],
+    thresholds: types::config::OptimizationThresholds,
+) -> OptimizeDelta {
+    let mut per_revision: BTreeMap<String, RevisionAccumulator> = BTreeMap::new();
+    for trace in traces {
+        per_revision
+            .entry(trace.revision.clone())
+            .or_default()
+            .add(trace);
+    }
+
+    let mut revisions = per_revision
+        .into_iter()
+        .filter_map(|(revision, accumulator)| accumulator.into_metrics(revision))
+        .collect::<Vec<_>>();
+
+    if revisions.len() < 2 {
+        return OptimizeDelta {
+            status: OptimizeDeltaStatus::InsufficientData,
+            baseline_revision: None,
+            current_revision: None,
+            completion_delta: 0.0,
+            token_delta_rel: 0.0,
+            step_delta_rel: 0.0,
+            task_overlap: 0.0,
+            reason: Some("need traces from at least two revisions".to_string()),
+        };
+    }
+
+    revisions.sort_by(|a, b| a.latest_ts.cmp(&b.latest_ts));
+    let baseline = &revisions[revisions.len() - 2];
+    let current = &revisions[revisions.len() - 1];
+
+    if baseline.total < thresholds.min_traces as usize || current.total < thresholds.min_traces as usize {
+        return OptimizeDelta {
+            status: OptimizeDeltaStatus::InsufficientData,
+            baseline_revision: Some(baseline.revision.clone()),
+            current_revision: Some(current.revision.clone()),
+            completion_delta: 0.0,
+            token_delta_rel: 0.0,
+            step_delta_rel: 0.0,
+            task_overlap: 0.0,
+            reason: Some(format!(
+                "need at least {} traces per revision (baseline={}, current={})",
+                thresholds.min_traces, baseline.total, current.total
+            )),
+        };
+    }
+
+    let overlap = compute_task_overlap(&baseline.tasks, &current.tasks);
+    if overlap < thresholds.task_overlap_threshold {
+        return OptimizeDelta {
+            status: OptimizeDeltaStatus::InsufficientData,
+            baseline_revision: Some(baseline.revision.clone()),
+            current_revision: Some(current.revision.clone()),
+            completion_delta: 0.0,
+            token_delta_rel: 0.0,
+            step_delta_rel: 0.0,
+            task_overlap: overlap,
+            reason: Some(format!(
+                "task overlap {:.2} is below threshold {:.2}",
+                overlap, thresholds.task_overlap_threshold
+            )),
+        };
+    }
+
+    let completion_delta = current.completion_rate - baseline.completion_rate;
+    let token_delta_rel = relative_delta(baseline.avg_tokens, current.avg_tokens);
+    let step_delta_rel = relative_delta(baseline.avg_steps, current.avg_steps);
+
+    let completion_signal = if completion_delta >= thresholds.min_uplift_abs {
+        1
+    } else if completion_delta <= -thresholds.min_uplift_abs {
+        -1
+    } else {
+        0
+    };
+    let token_signal = if token_delta_rel <= -thresholds.min_uplift_rel {
+        1
+    } else if token_delta_rel >= thresholds.min_uplift_rel {
+        -1
+    } else {
+        0
+    };
+    let step_signal = if step_delta_rel <= -thresholds.min_uplift_rel {
+        1
+    } else if step_delta_rel >= thresholds.min_uplift_rel {
+        -1
+    } else {
+        0
+    };
+    let total_signal = completion_signal + token_signal + step_signal;
+
+    let (status, reason) = if total_signal > 0 {
+        (OptimizeDeltaStatus::Improvement, None)
+    } else if total_signal < 0 {
+        (OptimizeDeltaStatus::Regression, None)
+    } else {
+        (
+            OptimizeDeltaStatus::Neutral,
+            Some("changes are below configured uplift thresholds".to_string()),
+        )
+    };
+
+    OptimizeDelta {
+        status,
+        baseline_revision: Some(baseline.revision.clone()),
+        current_revision: Some(current.revision.clone()),
+        completion_delta,
+        token_delta_rel,
+        step_delta_rel,
+        task_overlap: overlap,
+        reason,
+    }
 }
 
 fn render_optimize_report(
     report: &types::report::HarnessReport,
     trace_scan: TraceScanStats,
-    min_traces: u32,
+    thresholds: types::config::OptimizationThresholds,
     trace_dir: &std::path::Path,
+    delta: &OptimizeDelta,
 ) -> String {
     let mut ordered_report = report.clone();
     ordered_report.sort_recommendations();
@@ -556,7 +836,7 @@ fn render_optimize_report(
         ),
         format!(
             "Recent traces required for optimization: {}",
-            min_traces
+            thresholds.min_traces
         ),
         String::new(),
     ];
@@ -568,15 +848,50 @@ fn render_optimize_report(
         ));
     }
 
-    if trace_scan.recent < min_traces as usize {
+    if trace_scan.recent < thresholds.min_traces as usize {
         lines.push(
             "Status: insufficient data for optimization recommendations.".to_string(),
         );
         lines.push(format!(
             "Need at least {} recent traces before computing optimize deltas.",
-            min_traces
+            thresholds.min_traces
         ));
         lines.push(String::new());
+        return lines.join("\n");
+    }
+
+    lines.push("## Optimization Delta".to_string());
+    if let (Some(baseline), Some(current)) = (&delta.baseline_revision, &delta.current_revision) {
+        lines.push(format!(
+            "- revisions compared: baseline=`{}`, current=`{}`",
+            baseline, current
+        ));
+    }
+    lines.push(format!("- task overlap: {:.2}", delta.task_overlap));
+    lines.push(format!(
+        "- completion delta: {:+.3}, token delta (rel): {:+.3}, step delta (rel): {:+.3}",
+        delta.completion_delta, delta.token_delta_rel, delta.step_delta_rel
+    ));
+    match delta.status {
+        OptimizeDeltaStatus::Improvement => {
+            lines.push("Status: improvement detected.".to_string());
+        }
+        OptimizeDeltaStatus::Regression => {
+            lines.push("Status: regression warning.".to_string());
+        }
+        OptimizeDeltaStatus::Neutral => {
+            lines.push("Status: stable; changes are below uplift thresholds.".to_string());
+        }
+        OptimizeDeltaStatus::InsufficientData => {
+            lines.push("Status: insufficient comparative data for optimize deltas.".to_string());
+        }
+    }
+    if let Some(reason) = &delta.reason {
+        lines.push(format!("Reason: {}", reason));
+    }
+    lines.push(String::new());
+
+    if matches!(delta.status, OptimizeDeltaStatus::InsufficientData) {
         return lines.join("\n");
     }
 
@@ -606,6 +921,7 @@ mod tests {
     use super::*;
     use crate::types::report::{Effort, HarnessReport, Impact, Recommendation, Risk};
     use crate::types::scoring::ScoreCard;
+
     fn make_bench_context(os: &str, toolchain: &str, repo_dirty: bool) -> BenchContext {
         BenchContext {
             os: os.to_string(),
@@ -615,6 +931,40 @@ mod tests {
             harness_version: "0.1.0".to_string(),
             suite: "default".to_string(),
             timestamp: "2026-02-27T00:00:00Z".to_string(),
+        }
+    }
+
+    fn default_thresholds() -> types::config::OptimizationThresholds {
+        types::config::OptimizationThresholds::default()
+    }
+
+    fn neutral_delta() -> OptimizeDelta {
+        OptimizeDelta {
+            status: OptimizeDeltaStatus::Neutral,
+            baseline_revision: Some("rev-a".to_string()),
+            current_revision: Some("rev-b".to_string()),
+            completion_delta: 0.0,
+            token_delta_rel: 0.0,
+            step_delta_rel: 0.0,
+            task_overlap: 1.0,
+            reason: Some("changes are below configured uplift thresholds".to_string()),
+        }
+    }
+
+    fn make_recent_trace(
+        revision: &str,
+        task_id: &str,
+        outcome: &str,
+        steps: u32,
+        token_est: u64,
+    ) -> RecentTraceRecord {
+        RecentTraceRecord {
+            timestamp: chrono::Utc::now(),
+            task_id: task_id.to_string(),
+            revision: revision.to_string(),
+            outcome: outcome.to_string(),
+            steps: Some(steps),
+            token_est: Some(token_est),
         }
     }
 
@@ -653,8 +1003,9 @@ mod tests {
                 stale: 0,
                 malformed: 0,
             },
-            30,
+            default_thresholds(),
             std::path::Path::new(".harness/traces"),
+            &neutral_delta(),
         );
         let high_pos = rendered
             .find("`high`")
@@ -692,8 +1043,9 @@ mod tests {
                 stale: 0,
                 malformed: 0,
             },
-            30,
+            default_thresholds(),
             std::path::Path::new(".harness/traces"),
+            &neutral_delta(),
         );
         assert!(rendered.contains("insufficient data"));
         assert!(!rendered.contains("## Top Recommendations"));
@@ -715,8 +1067,9 @@ mod tests {
                 stale: 1,
                 malformed: 2,
             },
-            30,
+            default_thresholds(),
             std::path::Path::new(".harness/traces"),
+            &neutral_delta(),
         );
 
         assert!(rendered.contains("ignored malformed trace records: 2"));
@@ -742,6 +1095,71 @@ mod tests {
                 malformed: 2,
             }
         );
+    }
+
+    #[test]
+    fn compute_optimize_delta_detects_improvement() {
+        let thresholds = types::config::OptimizationThresholds {
+            min_traces: 1,
+            min_uplift_abs: 0.05,
+            min_uplift_rel: 0.10,
+            trace_staleness_days: 90,
+            task_overlap_threshold: 0.50,
+        };
+        let traces = vec![
+            make_recent_trace("rev-a", "task-1", "failure", 20, 200),
+            make_recent_trace("rev-a", "task-2", "success", 20, 200),
+            make_recent_trace("rev-b", "task-1", "success", 10, 100),
+            make_recent_trace("rev-b", "task-2", "success", 10, 100),
+        ];
+        let delta = compute_optimize_delta(&traces, thresholds);
+        assert_eq!(delta.status, OptimizeDeltaStatus::Improvement);
+        assert!(delta.completion_delta > 0.0);
+        assert!(delta.token_delta_rel < 0.0);
+        assert!(delta.step_delta_rel < 0.0);
+    }
+
+    #[test]
+    fn compute_optimize_delta_detects_regression() {
+        let thresholds = types::config::OptimizationThresholds {
+            min_traces: 1,
+            min_uplift_abs: 0.05,
+            min_uplift_rel: 0.10,
+            trace_staleness_days: 90,
+            task_overlap_threshold: 0.50,
+        };
+        let traces = vec![
+            make_recent_trace("rev-a", "task-1", "success", 10, 100),
+            make_recent_trace("rev-a", "task-2", "success", 10, 100),
+            make_recent_trace("rev-b", "task-1", "failure", 20, 220),
+            make_recent_trace("rev-b", "task-2", "success", 20, 220),
+        ];
+        let delta = compute_optimize_delta(&traces, thresholds);
+        assert_eq!(delta.status, OptimizeDeltaStatus::Regression);
+        assert!(delta.completion_delta < 0.0);
+        assert!(delta.token_delta_rel > 0.0);
+        assert!(delta.step_delta_rel > 0.0);
+    }
+
+    #[test]
+    fn compute_optimize_delta_rejects_low_task_overlap() {
+        let thresholds = types::config::OptimizationThresholds {
+            min_traces: 1,
+            min_uplift_abs: 0.05,
+            min_uplift_rel: 0.10,
+            trace_staleness_days: 90,
+            task_overlap_threshold: 0.80,
+        };
+        let traces = vec![
+            make_recent_trace("rev-a", "task-1", "success", 10, 100),
+            make_recent_trace("rev-a", "task-2", "success", 10, 100),
+            make_recent_trace("rev-b", "task-3", "success", 10, 100),
+            make_recent_trace("rev-b", "task-4", "success", 10, 100),
+        ];
+        let delta = compute_optimize_delta(&traces, thresholds);
+        assert_eq!(delta.status, OptimizeDeltaStatus::InsufficientData);
+        let reason = delta.reason.expect("reason should exist");
+        assert!(reason.contains("task overlap"));
     }
 
     #[test]

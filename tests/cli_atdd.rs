@@ -428,9 +428,16 @@ min_traces = 1
     .expect("config should write");
     let trace_dir = repo.path().join("custom-traces");
     fs::create_dir_all(&trace_dir).expect("trace dir should create");
+    let now = chrono::Utc::now().to_rfc3339();
     fs::write(
         trace_dir.join("run.jsonl"),
-        format!("{{\"timestamp\":\"{}\"}}\n", chrono::Utc::now().to_rfc3339()),
+        format!(
+            concat!(
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-1\",\"revision\":\"rev-a\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-1\",\"revision\":\"rev-b\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n"
+            ),
+            now
+        ),
     )
     .expect("trace file should write");
 
@@ -512,6 +519,126 @@ min_traces = 1
     assert!(
         report_content.contains("ignored malformed trace records: 1"),
         "optimize should report malformed traces as a warning"
+    );
+}
+
+#[test]
+fn optimize_reports_improvement_when_deltas_exceed_thresholds() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[optimization]
+min_traces = 1
+min_uplift_abs = 0.05
+min_uplift_rel = 0.10
+task_overlap_threshold = 0.50
+"#,
+    )
+    .expect("config should write");
+    let trace_dir = repo.path().join("traces");
+    fs::create_dir_all(&trace_dir).expect("trace dir should create");
+    let now = chrono::Utc::now().to_rfc3339();
+    fs::write(
+        trace_dir.join("run.jsonl"),
+        format!(
+            concat!(
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-1\",\"revision\":\"rev-a\",\"outcome\":\"failure\",\"steps\":20,\"token_est\":200}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-2\",\"revision\":\"rev-a\",\"outcome\":\"success\",\"steps\":20,\"token_est\":200}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-1\",\"revision\":\"rev-b\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-2\",\"revision\":\"rev-b\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n"
+            ),
+            now
+        ),
+    )
+    .expect("trace file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("optimize")
+        .arg(repo.path())
+        .arg("--trace-dir")
+        .arg(&trace_dir)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("optimize report:"));
+
+    let reports = fs::read_dir(repo.path().join(".harness/optimize"))
+        .expect("optimize dir should exist")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("entries should be readable");
+    let first_report = reports
+        .first()
+        .expect("at least one optimize report should exist")
+        .path();
+    let report_content =
+        fs::read_to_string(first_report).expect("optimize report should be readable");
+    assert!(
+        report_content.contains("Status: improvement detected."),
+        "optimize should classify significant positive deltas as improvement"
+    );
+}
+
+#[test]
+fn optimize_reports_insufficient_comparative_data_when_overlap_is_low() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[optimization]
+min_traces = 1
+task_overlap_threshold = 0.80
+"#,
+    )
+    .expect("config should write");
+    let trace_dir = repo.path().join("traces");
+    fs::create_dir_all(&trace_dir).expect("trace dir should create");
+    let now = chrono::Utc::now().to_rfc3339();
+    fs::write(
+        trace_dir.join("run.jsonl"),
+        format!(
+            concat!(
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-a\",\"revision\":\"rev-a\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-b\",\"revision\":\"rev-a\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-c\",\"revision\":\"rev-b\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n",
+                "{{\"timestamp\":\"{0}\",\"task_id\":\"task-d\",\"revision\":\"rev-b\",\"outcome\":\"success\",\"steps\":10,\"token_est\":100}}\n"
+            ),
+            now
+        ),
+    )
+    .expect("trace file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("optimize")
+        .arg(repo.path())
+        .arg("--trace-dir")
+        .arg(&trace_dir)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("optimize report:"));
+
+    let reports = fs::read_dir(repo.path().join(".harness/optimize"))
+        .expect("optimize dir should exist")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("entries should be readable");
+    let first_report = reports
+        .first()
+        .expect("at least one optimize report should exist")
+        .path();
+    let report_content =
+        fs::read_to_string(first_report).expect("optimize report should be readable");
+    assert!(
+        report_content.contains("Status: insufficient comparative data for optimize deltas."),
+        "optimize should block comparisons with low task overlap"
     );
 }
 
