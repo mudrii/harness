@@ -35,9 +35,6 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             archive_ext: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive_ext: zip
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
@@ -63,8 +60,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package and checksum (Unix)
-        if: runner.os != 'Windows'
+      - name: Package and checksum
         shell: bash
         run: |
           set -euo pipefail
@@ -77,17 +73,6 @@ jobs:
           else
             shasum -a 256 "dist/${ASSET}" | awk '{print $1}' > "dist/${CHECKSUM}"
           fi
-
-      - name: Package and checksum (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $asset = "$env:BINARY_NAME-$env:RELEASE_TAG-${{ matrix.target }}.${{ matrix.archive_ext }}"
-          $checksum = "$asset.sha256"
-          Compress-Archive -Path "target/${{ matrix.target }}/release/$env:BINARY_NAME.exe" -DestinationPath "dist/$asset" -Force
-          $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "dist/$checksum" -Value $hash
 
       - name: Upload build assets
         uses: actions/upload-artifact@v4
