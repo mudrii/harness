@@ -1326,8 +1326,8 @@ These are confirmed to be strictly within the v1 scope.
 | report/json,md | pending | Task 13 | Task 5 |
 | git gate | pending | Task 14 | Task 12 |
 | guardrails/policy | pending | Task 15 | Task 2 |
-| cli (enums) | pending | Task 16 | none |
-| main (exit codes) | done | Task 17 | none |
+| cli (enums) | done | Task 16 | none |
+| main (exit codes) | in-progress | Task 17 | none |
 
 Status values: pending | in-progress | done | blocked
 

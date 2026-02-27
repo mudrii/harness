@@ -151,10 +151,14 @@ Preconditions (checked in order before any writes):
 5. Explicit `y/N` confirmation in apply mode (skipped in preview mode or with `--yes`).
 
 Required flags:
-- `--plan-file path` or `--plan-all`.
+- Exactly one selector is required: `--plan-file <path>` xor `--plan-all`.
 - `--apply-mode {preview,apply}` (validated by `ApplyMode` enum via `clap::ValueEnum`)
 - `--allow-dirty` (skip clean working tree check)
 - `--yes` / `-y` (skip confirmation prompt)
+
+Selector validation contract:
+- CLI parsing must reject invalid selector combinations (`both missing` or `both provided`).
+- Implementation target: `clap` argument constraints (`conflicts_with` + `required_unless_present`).
 
 ### 4.5 `harness optimize <path>`
 
@@ -175,6 +179,10 @@ Behavior:
 - Persist `bench_context` per run: OS, toolchain, repo ref, dirty state, harness version, config hash, env vars, command, seed, timestamp.
 - Compare variant runs and identify regressions.
 - Comparison guard: refuse to compare runs with different OS, toolchain, or dirty state unless `--force-compare`.
+
+Planned flags:
+- v1 baseline: `--suite`, `--runs`
+- v1.1 compare mode: `--compare <run-id|path>`, `--force-compare`
 
 ### 4.7 `harness lint <path>`
 
@@ -521,6 +529,10 @@ Acceptance criterion for every change:
 - `1`: completed with warnings.
 - `2`: blocking issues detected.
 - `3`: runtime failure or parse failure.
+
+Implementation note:
+- Pre-alpha scaffolding may temporarily use simulated non-zero exits for wiring tests.
+- Before v1 release, exit codes must be derived from real command outcomes only.
 
 ## 12) Detailed repo structure recommendation
 

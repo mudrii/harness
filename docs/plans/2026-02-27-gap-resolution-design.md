@@ -86,6 +86,13 @@ Behavior:
 
 Implementation is deferred to v1.1 (trace module scope). This design documents the contract.
 
+Direction semantics (added 2026-02-27):
+- Completion rate: Δ > 0 is improvement (higher is better).
+- Token/step count: Δ < 0 is improvement (lower is better).
+- The |Δ| gate triggers on magnitude in either direction.
+- Positive changes produce "improvement" recommendations.
+- Negative changes produce "regression" warnings.
+
 **Files affected:** PLAN.md Sections 5.2, 10
 
 ---
@@ -134,9 +141,9 @@ max_penalty_per_bucket = 0.40
 
 ```toml
 [tools.baseline]
-read = ["cat", "rg", "git log", "git diff"]
+read = ["cat", "rg", "git"]
 write = ["apply_patch"]
-forbidden = ["sudo", "ssh", "nc", "rm -rf", "mkfs"]
+forbidden = ["sudo", "ssh", "nc", "mkfs"]
 
 [tools.aliases]
 grep = "rg"
@@ -147,6 +154,10 @@ The command policy checker:
 1. Expands aliases before matching
 2. Matches command + arguments (not just command name)
 3. Checks both exact and prefix matches for compound commands (e.g., `git push` matches forbidden `git push --force`)
+
+Constraint alignment:
+- Config lists use executable names only.
+- Argument restrictions are policy rules, not manifest command strings.
 
 Namespace-based classification (fs.read/fs.write/net/exec) is designed for v1.1.
 
@@ -171,6 +182,10 @@ pub allow_dirty: bool,
 #[arg(long, short)]
 pub yes: bool,
 ```
+
+Selector requirement:
+- Exactly one of `--plan-file <path>` or `--plan-all` must be provided.
+- Enforced in CLI parser via mutual exclusion + required-unless-present.
 
 Rollback manifest format:
 ```json
