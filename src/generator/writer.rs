@@ -148,6 +148,7 @@ fn resolve_plan(
             .filter(|recommendation| matches!(recommendation.risk, Risk::Safe))
             .map(|recommendation| recommendation.id)
             .collect::<Vec<_>>();
+        validate_recommendation_ids(&ids)?;
         return Ok(ids);
     }
 
@@ -170,8 +171,32 @@ fn resolve_plan(
             parsed.version
         )));
     }
+    validate_recommendation_ids(&parsed.recommendations)?;
 
     Ok(parsed.recommendations)
+}
+
+fn validate_recommendation_ids(ids: &[String]) -> Result<()> {
+    let unknown = ids
+        .iter()
+        .filter(|id| !is_known_recommendation_id(id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(HarnessError::ConfigParse(format!(
+            "unknown recommendation id(s) in plan: {}",
+            unknown.join(", ")
+        )))
+    }
+}
+
+fn is_known_recommendation_id(id: &str) -> bool {
+    matches!(
+        id,
+        "rec.context.index" | "rec.verification.gate" | "rec.tools.prune" | "rec.repo.scale"
+    )
 }
 
 fn build_changes(root: &Path, recommendation_ids: &[String]) -> Result<Vec<PlannedChange>> {
@@ -340,6 +365,7 @@ fn apply_changes(changes: &[PlannedChange]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::ApplyMode;
     use std::process::Command;
     use tempfile::TempDir;
 
@@ -388,5 +414,34 @@ mod tests {
         assert!(changes.iter().any(|change| {
             change.action == ChangeAction::Modify && change.path == tmp.path().join("AGENTS.md")
         }));
+    }
+
+    #[test]
+    fn test_resolve_plan_rejects_unknown_recommendation_id() {
+        let tmp = TempDir::new().expect("temp dir should create");
+        let plan_file = tmp.path().join("plan.json");
+        fs::write(
+            &plan_file,
+            format!(
+                r#"{{
+  "version": "{}",
+  "recommendations": ["rec.unknown"]
+}}"#,
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .expect("plan should write");
+
+        let cmd = ApplyCommand {
+            path: tmp.path().to_path_buf(),
+            plan_file: Some("plan.json".to_string()),
+            plan_all: false,
+            apply_mode: ApplyMode::Preview,
+            allow_dirty: true,
+            yes: true,
+        };
+
+        let result = resolve_plan(tmp.path(), &cmd, None);
+        assert!(result.is_err(), "unknown recommendation id should fail");
     }
 }
