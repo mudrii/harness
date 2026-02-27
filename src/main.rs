@@ -101,8 +101,33 @@ fn run() -> Result<i32, HarnessError> {
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Lint(cmd) => {
-            println!("lint requested for {}", cmd.path.display());
-            Ok(exit_code::SUCCESS)
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+
+            let loaded = config::load_config(&cmd.path)?;
+            let model = scan::discover(&cmd.path, loaded.as_ref());
+            let findings = analyze::lint::lint_findings(&model, loaded.as_ref());
+
+            if findings.is_empty() {
+                println!("lint: no findings");
+                return Ok(exit_code::SUCCESS);
+            }
+
+            for finding in &findings {
+                let level = if finding.blocking { "BLOCKING" } else { "WARN" };
+                println!("[{}] {}: {}", level, finding.id, finding.title);
+                println!("  {}", finding.body);
+            }
+
+            if findings.iter().any(|finding| finding.blocking) {
+                Ok(exit_code::BLOCKING)
+            } else {
+                Ok(exit_code::WARNINGS)
+            }
         }
     }
 }

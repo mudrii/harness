@@ -162,3 +162,38 @@ loop_guard_enabled = true
         .code(0)
         .stdout(predicate::str::contains("\"overall_score\""));
 }
+
+#[test]
+fn lint_returns_warning_when_git_repo_has_no_repo_config() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("lint")
+        .arg(repo.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("verification.missing_config"));
+}
+
+#[test]
+fn lint_returns_blocking_when_verification_is_incomplete() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("lint")
+        .arg(repo.path())
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("verification.incomplete"));
+}

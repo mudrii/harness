@@ -1,5 +1,6 @@
 pub mod context;
 pub mod continuity;
+pub mod lint;
 pub mod quality;
 pub mod tools;
 pub mod verification;
