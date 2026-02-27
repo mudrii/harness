@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 // Integration tests for the harness CLI.
 //
 // These tests use assert_cmd to invoke the binary and verify
@@ -63,7 +65,13 @@ fn apply_requires_plan_selector() {
 fn apply_rejects_both_selectors() {
     // --plan-file and --plan-all are mutually exclusive
     harness()
-        .args(["apply", "/tmp/test", "--plan-file", "foo.json", "--plan-all"])
+        .args([
+            "apply",
+            "/tmp/test",
+            "--plan-file",
+            "foo.json",
+            "--plan-all",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));

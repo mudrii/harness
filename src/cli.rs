@@ -2,7 +2,11 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "harness", version, about = "AI agent harness analysis and optimization CLI")]
+#[command(
+    name = "harness",
+    version,
+    about = "AI agent harness analysis and optimization CLI"
+)]
 pub struct Cli {
     /// Increase verbosity (-v for info, -vv for debug)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -75,13 +79,21 @@ pub struct SuggestCommand {
 #[derive(Args)]
 pub struct ApplyCommand {
     pub path: PathBuf,
-    
-    #[arg(long, required_unless_present = "plan_all")]
+
+    #[arg(
+        long,
+        required_unless_present = "plan_all",
+        conflicts_with = "plan_all"
+    )]
     pub plan_file: Option<String>,
-    
-    #[arg(long, conflicts_with = "plan_file")]
+
+    #[arg(
+        long,
+        required_unless_present = "plan_file",
+        conflicts_with = "plan_file"
+    )]
     pub plan_all: bool,
-    
+
     #[arg(long, value_enum, default_value = "preview")]
     pub apply_mode: ApplyMode,
     #[arg(long)]

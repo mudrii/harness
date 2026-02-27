@@ -1,18 +1,18 @@
+mod analyze;
 mod cli;
 mod config;
 mod error;
-mod types;
-mod scan;
-mod analyze;
-mod report;
 mod guardrails;
+mod report;
+mod scan;
+mod types;
 // Deferred modules (uncomment when implementing):
 // mod optimization;
 // mod generator;
 // mod trace;
 
-use clap::Parser;
 use crate::error::HarnessError;
+use clap::Parser;
 
 pub mod exit_code {
     pub const SUCCESS: i32 = 0;
@@ -26,12 +26,49 @@ fn run() -> Result<i32, HarnessError> {
     println!("Harness CLI v{}", env!("CARGO_PKG_VERSION"));
     match cli.command {
         cli::Commands::Analyze(cmd) => {
-            println!(
-                "analyze requested for {} (min_impact={:?})",
-                cmd.path.display(),
-                cmd.min_impact
-            );
-            Ok(exit_code::WARNINGS) // Output 1 to simulate warnings found
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+
+            let loaded = config::load_config(&cmd.path)?;
+            let model = scan::discover(&cmd.path, loaded.as_ref());
+            let mut harness_report = analyze::analyze(&model, loaded.as_ref());
+
+            if matches!(cmd.min_impact, cli::MinImpact::Safe) {
+                harness_report.recommendations.retain(|recommendation| {
+                    matches!(recommendation.risk, types::report::Risk::Safe)
+                });
+            }
+
+            let output_format = match cmd.format {
+                cli::ReportFormat::Json => report::OutputFormat::Json,
+                cli::ReportFormat::Md => report::OutputFormat::Md,
+                cli::ReportFormat::Sarif => report::OutputFormat::Sarif,
+            };
+            let rendered = report::render(&harness_report, output_format)?;
+            println!("{rendered}");
+
+            let has_blocking = harness_report
+                .findings
+                .iter()
+                .any(|finding| finding.blocking);
+            let has_warnings = !harness_report.findings.is_empty();
+            let missing_config = loaded.is_none();
+
+            if missing_config {
+                eprintln!("warning: no harness.toml found in {}", cmd.path.display());
+            }
+
+            if has_blocking {
+                Ok(exit_code::BLOCKING)
+            } else if missing_config || has_warnings {
+                Ok(exit_code::WARNINGS)
+            } else {
+                Ok(exit_code::SUCCESS)
+            }
         }
         cli::Commands::Suggest(cmd) => {
             println!("suggest requested for {}", cmd.path.display());
@@ -64,7 +101,7 @@ fn run() -> Result<i32, HarnessError> {
         }
         cli::Commands::Lint(cmd) => {
             println!("lint requested for {}", cmd.path.display());
-            Ok(exit_code::BLOCKING) // Output 2 to simulate blocking lint rule
+            Ok(exit_code::SUCCESS)
         }
     }
 }
