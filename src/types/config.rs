@@ -1,3 +1,4 @@
+use crate::error::HarnessError;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -145,6 +146,57 @@ impl HarnessConfig {
             .and_then(|metrics| metrics.max_penalty_per_bucket)
             .unwrap_or(0.40)
     }
+
+    pub fn validate(&self) -> Result<(), HarnessError> {
+        if !matches!(self.project.profile.as_str(), "general" | "agent") {
+            return Err(HarnessError::ConfigParse(format!(
+                "unsupported project.profile: {}",
+                self.project.profile
+            )));
+        }
+
+        let weights = self.weights();
+        if weights.iter().any(|weight| !(0.0..=1.0).contains(weight)) {
+            return Err(HarnessError::ConfigParse(
+                "metrics.weights values must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        let weight_sum: f32 = weights.iter().sum();
+        if (weight_sum - 1.0).abs() > 0.001 {
+            return Err(HarnessError::ConfigParse(format!(
+                "metrics.weights must sum to 1.0 (found {:.3})",
+                weight_sum
+            )));
+        }
+
+        if let Some(metrics) = &self.metrics {
+            if let Some(max_risk_tolerance) = metrics.max_risk_tolerance {
+                if !(0.0..=1.0).contains(&max_risk_tolerance) {
+                    return Err(HarnessError::ConfigParse(
+                        "metrics.max_risk_tolerance must be between 0.0 and 1.0".to_string(),
+                    ));
+                }
+            }
+            if let Some(max_penalty_per_bucket) = metrics.max_penalty_per_bucket {
+                if !(0.0..=1.0).contains(&max_penalty_per_bucket) {
+                    return Err(HarnessError::ConfigParse(
+                        "metrics.max_penalty_per_bucket must be between 0.0 and 1.0".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if let Some(verification) = &self.verification {
+            if verification.pre_completion_required && verification.required.is_empty() {
+                return Err(HarnessError::ConfigParse(
+                    "verification.required cannot be empty when pre_completion_required = true"
+                        .to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub type Config = HarnessConfig;
@@ -221,5 +273,54 @@ name = "test"
         let cfg: HarnessConfig = toml::from_str(toml_str).expect("defaults should parse");
         let weights = cfg.weights();
         assert!((weights.iter().sum::<f32>() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_weight_sum() {
+        let toml_str = r#"
+[project]
+name = "test"
+
+[metrics.weights]
+context = 0.9
+tools = 0.9
+continuity = 0.1
+verification = 0.1
+repository_quality = 0.1
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_pre_completion_without_required() {
+        let toml_str = r#"
+[project]
+name = "test"
+
+[verification]
+pre_completion_required = true
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_valid_config() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "general"
+
+[metrics]
+max_risk_tolerance = 0.5
+max_penalty_per_bucket = 0.4
+
+[verification]
+required = ["cargo test"]
+pre_completion_required = true
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        assert!(cfg.validate().is_ok());
     }
 }

@@ -34,6 +34,7 @@ pub(crate) fn load_config_with_global(
     let cfg: HarnessConfig = merged
         .try_into()
         .map_err(|e: toml::de::Error| HarnessError::ConfigParse(e.to_string()))?;
+    cfg.validate()?;
     Ok(Some(cfg))
 }
 
