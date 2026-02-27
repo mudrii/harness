@@ -235,3 +235,49 @@ fn suggest_export_diff_writes_plan_file() {
         "at least one plan file should be written"
     );
 }
+
+#[test]
+fn init_dry_run_does_not_write_files() {
+    let repo = TempDir::new().expect("temp dir should be created");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("init")
+        .arg(repo.path())
+        .arg("--dry-run")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("dry-run: no files were written"));
+
+    assert!(!repo.path().join("harness.toml").exists());
+    assert!(!repo.path().join("AGENTS.md").exists());
+}
+
+#[test]
+fn init_writes_baseline_files() {
+    let repo = TempDir::new().expect("temp dir should be created");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("init").arg(repo.path()).assert().code(0);
+
+    assert!(repo.path().join("harness.toml").exists());
+    assert!(repo.path().join("AGENTS.md").exists());
+    assert!(repo.path().join("docs/context/INDEX.md").exists());
+}
+
+#[test]
+fn init_no_overwrite_preserves_existing_harness_toml() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::write(repo.path().join("harness.toml"), "custom=true").expect("file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("init")
+        .arg(repo.path())
+        .arg("--no-overwrite")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("skip existing"));
+
+    let content =
+        fs::read_to_string(repo.path().join("harness.toml")).expect("file should be readable");
+    assert_eq!(content, "custom=true");
+}
