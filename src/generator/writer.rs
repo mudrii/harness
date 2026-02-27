@@ -60,12 +60,12 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
     let loaded = config::load_config(&cmd.path)?;
 
     if !cmd.allow_dirty {
-        check_clean_tree(&cmd.path)?;
+        check_clean_tree(&cmd.path, loaded.as_ref())?;
     }
 
     let recommendation_ids = resolve_plan(&cmd.path, cmd, loaded.as_ref())?;
     let changes = build_changes(&cmd.path, &recommendation_ids)?;
-    guardrails::validate(&[], changes.len() as u32)?;
+    guardrails::validate_with_config(&[], changes.len() as u32, loaded.as_ref())?;
 
     print_scope_summary(&cmd.path, &changes);
     if changes.is_empty() {
@@ -90,9 +90,12 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
     Ok(())
 }
 
-pub fn check_clean_tree(root: &Path) -> Result<()> {
+pub fn check_clean_tree(
+    root: &Path,
+    config: Option<&crate::types::config::HarnessConfig>,
+) -> Result<()> {
     let command_line = "git status --porcelain";
-    guardrails::validate(&[command_line], 0)?;
+    guardrails::validate_with_config(&[command_line], 0, config)?;
 
     let output = Command::new("git")
         .args(["status", "--porcelain"])
@@ -353,7 +356,7 @@ mod tests {
     fn test_clean_tree_check_passes_on_clean_repo() {
         let tmp = TempDir::new().expect("temp dir should create");
         init_git_repo(tmp.path());
-        assert!(check_clean_tree(tmp.path()).is_ok());
+        assert!(check_clean_tree(tmp.path(), None).is_ok());
     }
 
     #[test]
@@ -361,7 +364,7 @@ mod tests {
         let tmp = TempDir::new().expect("temp dir should create");
         init_git_repo(tmp.path());
         fs::write(tmp.path().join("dirty.txt"), "change").expect("dirty file should write");
-        assert!(check_clean_tree(tmp.path()).is_err());
+        assert!(check_clean_tree(tmp.path(), None).is_err());
     }
 
     #[test]
