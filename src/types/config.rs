@@ -10,6 +10,7 @@ pub struct HarnessConfig {
     pub verification: Option<VerificationConfig>,
     pub continuity: Option<ContinuityConfig>,
     pub metrics: Option<MetricsConfig>,
+    pub optimization: Option<OptimizationConfig>,
     pub workflow: Option<WorkflowConfig>,
 }
 
@@ -112,6 +113,36 @@ pub struct MetricsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct OptimizationConfig {
+    pub min_traces: Option<u32>,
+    pub min_uplift_abs: Option<f32>,
+    pub min_uplift_rel: Option<f32>,
+    pub trace_staleness_days: Option<u32>,
+    pub task_overlap_threshold: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OptimizationThresholds {
+    pub min_traces: u32,
+    pub min_uplift_abs: f32,
+    pub min_uplift_rel: f32,
+    pub trace_staleness_days: u32,
+    pub task_overlap_threshold: f32,
+}
+
+impl Default for OptimizationThresholds {
+    fn default() -> Self {
+        Self {
+            min_traces: 30,
+            min_uplift_abs: 0.05,
+            min_uplift_rel: 0.10,
+            trace_staleness_days: 90,
+            task_overlap_threshold: 0.50,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowConfig {
     pub max_consecutive_failures: Option<u32>,
     pub max_idle_steps: Option<u32>,
@@ -145,6 +176,24 @@ impl HarnessConfig {
             .as_ref()
             .and_then(|metrics| metrics.max_penalty_per_bucket)
             .unwrap_or(0.40)
+    }
+
+    pub fn optimization_thresholds(&self) -> OptimizationThresholds {
+        let defaults = OptimizationThresholds::default();
+        match &self.optimization {
+            Some(optimization) => OptimizationThresholds {
+                min_traces: optimization.min_traces.unwrap_or(defaults.min_traces),
+                min_uplift_abs: optimization.min_uplift_abs.unwrap_or(defaults.min_uplift_abs),
+                min_uplift_rel: optimization.min_uplift_rel.unwrap_or(defaults.min_uplift_rel),
+                trace_staleness_days: optimization
+                    .trace_staleness_days
+                    .unwrap_or(defaults.trace_staleness_days),
+                task_overlap_threshold: optimization
+                    .task_overlap_threshold
+                    .unwrap_or(defaults.task_overlap_threshold),
+            },
+            None => defaults,
+        }
     }
 
     pub fn validate(&self) -> Result<(), HarnessError> {
@@ -192,6 +241,45 @@ impl HarnessConfig {
                     "verification.required cannot be empty when pre_completion_required = true"
                         .to_string(),
                 ));
+            }
+        }
+
+        if let Some(optimization) = &self.optimization {
+            if let Some(min_traces) = optimization.min_traces {
+                if min_traces == 0 {
+                    return Err(HarnessError::ConfigParse(
+                        "optimization.min_traces must be greater than 0".to_string(),
+                    ));
+                }
+            }
+            if let Some(min_uplift_abs) = optimization.min_uplift_abs {
+                if !(0.0..=1.0).contains(&min_uplift_abs) {
+                    return Err(HarnessError::ConfigParse(
+                        "optimization.min_uplift_abs must be between 0.0 and 1.0".to_string(),
+                    ));
+                }
+            }
+            if let Some(min_uplift_rel) = optimization.min_uplift_rel {
+                if !(0.0..=1.0).contains(&min_uplift_rel) {
+                    return Err(HarnessError::ConfigParse(
+                        "optimization.min_uplift_rel must be between 0.0 and 1.0".to_string(),
+                    ));
+                }
+            }
+            if let Some(trace_staleness_days) = optimization.trace_staleness_days {
+                if trace_staleness_days == 0 {
+                    return Err(HarnessError::ConfigParse(
+                        "optimization.trace_staleness_days must be greater than 0".to_string(),
+                    ));
+                }
+            }
+            if let Some(task_overlap_threshold) = optimization.task_overlap_threshold {
+                if !(0.0..=1.0).contains(&task_overlap_threshold) {
+                    return Err(HarnessError::ConfigParse(
+                        "optimization.task_overlap_threshold must be between 0.0 and 1.0"
+                            .to_string(),
+                    ));
+                }
             }
         }
 
@@ -322,5 +410,69 @@ pre_completion_required = true
 "#;
         let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn optimization_thresholds_default_when_missing() {
+        let toml_str = r#"
+[project]
+name = "test"
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let thresholds = cfg.optimization_thresholds();
+        assert_eq!(
+            thresholds,
+            OptimizationThresholds {
+                min_traces: 30,
+                min_uplift_abs: 0.05,
+                min_uplift_rel: 0.10,
+                trace_staleness_days: 90,
+                task_overlap_threshold: 0.50,
+            }
+        );
+    }
+
+    #[test]
+    fn optimization_thresholds_parse_and_override_defaults() {
+        let toml_str = r#"
+[project]
+name = "test"
+
+[optimization]
+min_traces = 50
+min_uplift_abs = 0.08
+min_uplift_rel = 0.12
+trace_staleness_days = 30
+task_overlap_threshold = 0.75
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let thresholds = cfg.optimization_thresholds();
+        assert_eq!(
+            thresholds,
+            OptimizationThresholds {
+                min_traces: 50,
+                min_uplift_abs: 0.08,
+                min_uplift_rel: 0.12,
+                trace_staleness_days: 30,
+                task_overlap_threshold: 0.75,
+            }
+        );
+    }
+
+    #[test]
+    fn validate_rejects_invalid_optimization_thresholds() {
+        let toml_str = r#"
+[project]
+name = "test"
+
+[optimization]
+min_traces = 0
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(
+            err.to_string()
+                .contains("optimization.min_traces must be greater than 0")
+        );
     }
 }

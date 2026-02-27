@@ -13,7 +13,7 @@ mod types;
 
 use crate::error::HarnessError;
 use clap::Parser;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub mod exit_code {
     pub const SUCCESS: i32 = 0;
@@ -183,17 +183,31 @@ fn run() -> Result<i32, HarnessError> {
             }
 
             let loaded = config::load_config(&cmd.path)?;
+            let thresholds = loaded
+                .as_ref()
+                .map(types::config::HarnessConfig::optimization_thresholds)
+                .unwrap_or_default();
+
+            let trace_dir = cmd
+                .trace_dir
+                .clone()
+                .unwrap_or_else(|| cmd.path.join(".harness/traces"));
+            let recent_trace_count =
+                count_recent_traces(&trace_dir, thresholds.trace_staleness_days)?;
+
             let model = scan::discover(&cmd.path, loaded.as_ref());
             let report = analyze::analyze(&model, loaded.as_ref());
 
-            let out_dir = cmd
-                .trace_dir
-                .clone()
-                .unwrap_or_else(|| cmd.path.join(".harness/optimize"));
+            let out_dir = cmd.path.join(".harness/optimize");
             std::fs::create_dir_all(&out_dir).map_err(HarnessError::Io)?;
             let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
             let out_path = out_dir.join(format!("optimize-{stamp}.md"));
-            let content = render_optimize_report(&report);
+            let content = render_optimize_report(
+                &report,
+                recent_trace_count,
+                thresholds.min_traces,
+                &trace_dir,
+            );
             std::fs::write(&out_path, content).map_err(HarnessError::Io)?;
             println!("optimize report: {}", out_path.display());
             Ok(exit_code::SUCCESS)
@@ -397,7 +411,60 @@ fn write_bench_report(
     Ok(out)
 }
 
-fn render_optimize_report(report: &types::report::HarnessReport) -> String {
+#[derive(Debug, Deserialize)]
+struct TraceRecord {
+    timestamp: String,
+}
+
+fn count_recent_traces(
+    trace_dir: &std::path::Path,
+    max_age_days: u32,
+) -> Result<usize, HarnessError> {
+    if !trace_dir.exists() {
+        return Ok(0);
+    }
+
+    let now = chrono::Utc::now();
+    let max_age = i64::from(max_age_days);
+    let mut total = 0usize;
+
+    for entry_result in std::fs::read_dir(trace_dir).map_err(HarnessError::Io)? {
+        let entry = entry_result.map_err(HarnessError::Io)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let extension = path.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("jsonl" | "json")) {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path).map_err(HarnessError::Io)?;
+        for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let record = match serde_json::from_str::<TraceRecord>(line) {
+                Ok(record) => record,
+                Err(_) => continue,
+            };
+            let timestamp = match chrono::DateTime::parse_from_rfc3339(&record.timestamp) {
+                Ok(value) => value.with_timezone(&chrono::Utc),
+                Err(_) => continue,
+            };
+            let age_days = now.signed_duration_since(timestamp).num_days();
+            if age_days <= max_age {
+                total += 1;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn render_optimize_report(
+    report: &types::report::HarnessReport,
+    recent_trace_count: usize,
+    min_traces: u32,
+    trace_dir: &std::path::Path,
+) -> String {
     let mut ordered_report = report.clone();
     ordered_report.sort_recommendations();
 
@@ -405,9 +472,27 @@ fn render_optimize_report(report: &types::report::HarnessReport) -> String {
         "# Harness Optimize Report".to_string(),
         String::new(),
         format!("Overall score: {:.3}", ordered_report.overall_score),
+        format!("Trace directory: {}", trace_dir.display()),
+        format!(
+            "Recent traces: {} (minimum required: {})",
+            recent_trace_count, min_traces
+        ),
         String::new(),
-        "## Top Recommendations".to_string(),
     ];
+
+    if recent_trace_count < min_traces as usize {
+        lines.push(
+            "Status: insufficient data for optimization recommendations.".to_string(),
+        );
+        lines.push(format!(
+            "Need at least {} recent traces before computing optimize deltas.",
+            min_traces
+        ));
+        lines.push(String::new());
+        return lines.join("\n");
+    }
+
+    lines.push("## Top Recommendations".to_string());
 
     if ordered_report.recommendations.is_empty() {
         lines.push("- No recommendations available.".to_string());
@@ -462,7 +547,12 @@ mod tests {
             ],
         };
 
-        let rendered = render_optimize_report(&report);
+        let rendered = render_optimize_report(
+            &report,
+            30,
+            30,
+            std::path::Path::new(".harness/traces"),
+        );
         let high_pos = rendered
             .find("`high`")
             .expect("high recommendation should render");
@@ -473,6 +563,33 @@ mod tests {
             high_pos < low_pos,
             "high-priority recommendation should appear first"
         );
+    }
+
+    #[test]
+    fn render_optimize_report_shows_insufficient_data_gate() {
+        let report = HarnessReport {
+            overall_score: 0.5,
+            category_scores: ScoreCard::new(0.5, 0.5, 0.5, 0.5, 0.5),
+            findings: vec![],
+            recommendations: vec![Recommendation::new(
+                "high",
+                "High",
+                "high summary",
+                Impact::High,
+                Effort::S,
+                Risk::Safe,
+                0.9,
+            )],
+        };
+
+        let rendered = render_optimize_report(
+            &report,
+            2,
+            30,
+            std::path::Path::new(".harness/traces"),
+        );
+        assert!(rendered.contains("insufficient data"));
+        assert!(!rendered.contains("## Top Recommendations"));
     }
 }
 

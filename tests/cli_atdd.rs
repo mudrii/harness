@@ -326,6 +326,17 @@ fn optimize_writes_report_file() {
         !reports.is_empty(),
         "optimize should write at least one report"
     );
+
+    let first_report = reports
+        .first()
+        .expect("at least one optimize report should exist")
+        .path();
+    let report_content =
+        fs::read_to_string(first_report).expect("optimize report should be readable");
+    assert!(
+        report_content.contains("insufficient data"),
+        "optimize should gate recommendations when traces are below threshold"
+    );
 }
 
 #[test]
