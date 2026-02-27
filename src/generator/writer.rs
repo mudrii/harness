@@ -63,11 +63,7 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
 
     let recommendation_ids = resolve_plan(&cmd.path, cmd)?;
     let changes = build_changes(&cmd.path, &recommendation_ids)?;
-    if guardrails::loop_guard::detect_loop(changes.len() as u32) {
-        return Err(HarnessError::ConfigParse(
-            "loop guard triggered: planned change count exceeds threshold".to_string(),
-        ));
-    }
+    guardrails::validate(&[], changes.len() as u32)?;
 
     print_scope_summary(&cmd.path, &changes);
     if changes.is_empty() {
@@ -94,9 +90,7 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
 
 pub fn check_clean_tree(root: &Path) -> Result<()> {
     let command_line = "git status --porcelain";
-    if guardrails::command_policy::is_forbidden(command_line) {
-        return Err(HarnessError::ForbiddenToolAccess(command_line.to_string()));
-    }
+    guardrails::validate(&[command_line], 0)?;
 
     let output = Command::new("git")
         .args(["status", "--porcelain"])
