@@ -192,7 +192,7 @@ fn run() -> Result<i32, HarnessError> {
                 .trace_dir
                 .clone()
                 .unwrap_or_else(|| cmd.path.join(".harness/traces"));
-            let recent_trace_count =
+            let trace_scan =
                 count_recent_traces(&trace_dir, thresholds.trace_staleness_days)?;
 
             let model = scan::discover(&cmd.path, loaded.as_ref());
@@ -204,7 +204,7 @@ fn run() -> Result<i32, HarnessError> {
             let out_path = out_dir.join(format!("optimize-{stamp}.md"));
             let content = render_optimize_report(
                 &report,
-                recent_trace_count,
+                trace_scan,
                 thresholds.min_traces,
                 &trace_dir,
             );
@@ -416,17 +416,24 @@ struct TraceRecord {
     timestamp: String,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TraceScanStats {
+    recent: usize,
+    stale: usize,
+    malformed: usize,
+}
+
 fn count_recent_traces(
     trace_dir: &std::path::Path,
     max_age_days: u32,
-) -> Result<usize, HarnessError> {
+) -> Result<TraceScanStats, HarnessError> {
     if !trace_dir.exists() {
-        return Ok(0);
+        return Ok(TraceScanStats::default());
     }
 
     let now = chrono::Utc::now();
     let max_age = i64::from(max_age_days);
-    let mut total = 0usize;
+    let mut stats = TraceScanStats::default();
 
     for entry_result in std::fs::read_dir(trace_dir).map_err(HarnessError::Io)? {
         let entry = entry_result.map_err(HarnessError::Io)?;
@@ -444,24 +451,32 @@ fn count_recent_traces(
         for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
             let record = match serde_json::from_str::<TraceRecord>(line) {
                 Ok(record) => record,
-                Err(_) => continue,
+                Err(_) => {
+                    stats.malformed += 1;
+                    continue;
+                }
             };
             let timestamp = match chrono::DateTime::parse_from_rfc3339(&record.timestamp) {
                 Ok(value) => value.with_timezone(&chrono::Utc),
-                Err(_) => continue,
+                Err(_) => {
+                    stats.malformed += 1;
+                    continue;
+                }
             };
             let age_days = now.signed_duration_since(timestamp).num_days();
             if age_days <= max_age {
-                total += 1;
+                stats.recent += 1;
+            } else {
+                stats.stale += 1;
             }
         }
     }
-    Ok(total)
+    Ok(stats)
 }
 
 fn render_optimize_report(
     report: &types::report::HarnessReport,
-    recent_trace_count: usize,
+    trace_scan: TraceScanStats,
     min_traces: u32,
     trace_dir: &std::path::Path,
 ) -> String {
@@ -474,13 +489,24 @@ fn render_optimize_report(
         format!("Overall score: {:.3}", ordered_report.overall_score),
         format!("Trace directory: {}", trace_dir.display()),
         format!(
-            "Recent traces: {} (minimum required: {})",
-            recent_trace_count, min_traces
+            "Trace records: recent={}, stale={}, malformed={}",
+            trace_scan.recent, trace_scan.stale, trace_scan.malformed
+        ),
+        format!(
+            "Recent traces required for optimization: {}",
+            min_traces
         ),
         String::new(),
     ];
 
-    if recent_trace_count < min_traces as usize {
+    if trace_scan.malformed > 0 {
+        lines.push(format!(
+            "Warning: ignored malformed trace records: {}",
+            trace_scan.malformed
+        ));
+    }
+
+    if trace_scan.recent < min_traces as usize {
         lines.push(
             "Status: insufficient data for optimization recommendations.".to_string(),
         );
@@ -549,7 +575,11 @@ mod tests {
 
         let rendered = render_optimize_report(
             &report,
-            30,
+            TraceScanStats {
+                recent: 30,
+                stale: 0,
+                malformed: 0,
+            },
             30,
             std::path::Path::new(".harness/traces"),
         );
@@ -584,12 +614,61 @@ mod tests {
 
         let rendered = render_optimize_report(
             &report,
-            2,
+            TraceScanStats {
+                recent: 2,
+                stale: 0,
+                malformed: 0,
+            },
             30,
             std::path::Path::new(".harness/traces"),
         );
         assert!(rendered.contains("insufficient data"));
         assert!(!rendered.contains("## Top Recommendations"));
+    }
+
+    #[test]
+    fn render_optimize_report_surfaces_malformed_trace_warning() {
+        let report = HarnessReport {
+            overall_score: 0.5,
+            category_scores: ScoreCard::new(0.5, 0.5, 0.5, 0.5, 0.5),
+            findings: vec![],
+            recommendations: vec![],
+        };
+
+        let rendered = render_optimize_report(
+            &report,
+            TraceScanStats {
+                recent: 30,
+                stale: 1,
+                malformed: 2,
+            },
+            30,
+            std::path::Path::new(".harness/traces"),
+        );
+
+        assert!(rendered.contains("ignored malformed trace records: 2"));
+    }
+
+    #[test]
+    fn count_recent_traces_reports_recent_stale_and_malformed_records() {
+        let dir = tempfile::TempDir::new().expect("temp dir should be created");
+        let now = chrono::Utc::now();
+        let content = format!(
+            "{{\"timestamp\":\"{}\"}}\n{{\"timestamp\":\"{}\"}}\nnot-json\n{{\"timestamp\":\"invalid\"}}\n",
+            now.to_rfc3339(),
+            (now - chrono::Duration::days(120)).to_rfc3339(),
+        );
+        std::fs::write(dir.path().join("traces.jsonl"), content).expect("trace file should write");
+
+        let stats = count_recent_traces(dir.path(), 90).expect("trace scan should succeed");
+        assert_eq!(
+            stats,
+            TraceScanStats {
+                recent: 1,
+                stale: 1,
+                malformed: 2,
+            }
+        );
     }
 }
 

@@ -340,6 +340,111 @@ fn optimize_writes_report_file() {
 }
 
 #[test]
+fn optimize_with_sufficient_traces_renders_recommendations() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[optimization]
+min_traces = 1
+"#,
+    )
+    .expect("config should write");
+    let trace_dir = repo.path().join("custom-traces");
+    fs::create_dir_all(&trace_dir).expect("trace dir should create");
+    fs::write(
+        trace_dir.join("run.jsonl"),
+        format!("{{\"timestamp\":\"{}\"}}\n", chrono::Utc::now().to_rfc3339()),
+    )
+    .expect("trace file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("optimize")
+        .arg(repo.path())
+        .arg("--trace-dir")
+        .arg(&trace_dir)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("optimize report:"));
+
+    let reports = fs::read_dir(repo.path().join(".harness/optimize"))
+        .expect("optimize dir should exist")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("entries should be readable");
+    let first_report = reports
+        .first()
+        .expect("at least one optimize report should exist")
+        .path();
+    let report_content =
+        fs::read_to_string(first_report).expect("optimize report should be readable");
+    assert!(
+        report_content.contains("## Top Recommendations"),
+        "optimize should emit recommendations when trace threshold is met"
+    );
+    assert!(
+        !report_content.contains("insufficient data"),
+        "optimize should not emit insufficient data when threshold is met"
+    );
+}
+
+#[test]
+fn optimize_surfaces_malformed_trace_warning_without_failing() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[optimization]
+min_traces = 1
+"#,
+    )
+    .expect("config should write");
+    let trace_dir = repo.path().join("traces");
+    fs::create_dir_all(&trace_dir).expect("trace dir should create");
+    fs::write(
+        trace_dir.join("run.jsonl"),
+        format!(
+            "{{\"timestamp\":\"{}\"}}\nnot-json\n",
+            chrono::Utc::now().to_rfc3339()
+        ),
+    )
+    .expect("trace file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("optimize")
+        .arg(repo.path())
+        .arg("--trace-dir")
+        .arg(&trace_dir)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("optimize report:"));
+
+    let reports = fs::read_dir(repo.path().join(".harness/optimize"))
+        .expect("optimize dir should exist")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("entries should be readable");
+    let first_report = reports
+        .first()
+        .expect("at least one optimize report should exist")
+        .path();
+    let report_content =
+        fs::read_to_string(first_report).expect("optimize report should be readable");
+    assert!(
+        report_content.contains("ignored malformed trace records: 1"),
+        "optimize should report malformed traces as a warning"
+    );
+}
+
+#[test]
 fn analyze_fails_on_invalid_config_weights() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
