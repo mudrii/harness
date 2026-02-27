@@ -71,7 +71,47 @@ fn run() -> Result<i32, HarnessError> {
             }
         }
         cli::Commands::Suggest(cmd) => {
-            println!("suggest requested for {}", cmd.path.display());
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+
+            let loaded = config::load_config(&cmd.path)?;
+            let model = scan::discover(&cmd.path, loaded.as_ref());
+            let report = analyze::analyze(&model, loaded.as_ref());
+
+            if report.recommendations.is_empty() {
+                println!("suggest: no recommendations");
+                return Ok(exit_code::SUCCESS);
+            }
+
+            println!("suggestions:");
+            for recommendation in &report.recommendations {
+                println!(
+                    "- {} [{} {:?}/{:?}]",
+                    recommendation.id,
+                    recommendation.title,
+                    recommendation.impact,
+                    recommendation.risk
+                );
+            }
+
+            if cmd.export_diff {
+                let ids = report
+                    .recommendations
+                    .iter()
+                    .filter(|recommendation| {
+                        matches!(recommendation.risk, types::report::Risk::Safe)
+                    })
+                    .map(|recommendation| recommendation.id.clone())
+                    .collect::<Vec<_>>();
+                let plan = generator::manifest::SuggestPlan::new(ids);
+                let path = generator::manifest::write_plan(&cmd.path, &plan)?;
+                println!("plan file: {}", path.display());
+            }
+
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Init(cmd) => {

@@ -197,3 +197,41 @@ profile = "general"
         .code(2)
         .stdout(predicate::str::contains("verification.incomplete"));
 }
+
+#[test]
+fn suggest_outputs_ranked_recommendations() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("suggest")
+        .arg(repo.path())
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("suggestions:"))
+        .stdout(predicate::str::contains("rec.context.index"));
+}
+
+#[test]
+fn suggest_export_diff_writes_plan_file() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("suggest")
+        .arg(repo.path())
+        .arg("--export-diff")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("plan file:"));
+
+    let plans_dir = repo.path().join(".harness/plans");
+    let entries = fs::read_dir(plans_dir)
+        .expect("plans directory should exist")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("plans entries should be readable");
+    assert!(
+        !entries.is_empty(),
+        "at least one plan file should be written"
+    );
+}
