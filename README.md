@@ -63,12 +63,26 @@ harness lint /path/to/repo
 ## Documentation
 
 - Agent first-read guide: `AGENT_README.md`
+- Mandatory agent context pack:
+  - `AGENT_README.md`
+  - `CONTRACTS.md`
+  - `TEST_STRATEGY.md`
+  - `REPO_MAP.json`
+  - `ERROR_CATALOG.json`
+- Optional/on-demand docs:
+  - `ARCHITECTURE.md`
+  - `docs/CODE_STRUCTURE.md`
+  - `PLAN.md`
+  - `COMMAND_EXAMPLES.md`
+  - `TEST_MATRIX.md`
 - Architecture: `ARCHITECTURE.md`
 - Code structure map: `docs/CODE_STRUCTURE.md`
 - Installation and upgrade: `docs/INSTALLATION.md`
 - Product and implementation plan: `PLAN.md`
 
-> For any agent-driven development in this repository, start with `AGENT_README.md` before making changes.
+> For any agent-driven development in this repository, start with the mandatory context pack above.
+> Behavioral truth should come from tests and simulation:
+> `tests/cli_atdd.rs` and `scripts/simulate_cli_use_cases.sh`.
 
 ## Development
 

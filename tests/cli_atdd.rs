@@ -346,6 +346,19 @@ fn suggest_outputs_ranked_recommendations() {
 }
 
 #[test]
+fn suggest_without_tool_pressure_does_not_emit_tools_prune() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("suggest")
+        .arg(repo.path())
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("rec.tools.prune").not());
+}
+
+#[test]
 fn suggest_export_diff_writes_plan_file() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");

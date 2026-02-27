@@ -8,23 +8,26 @@ Single first-read entrypoint for coding agents working in this repository.
 
 Implement requested changes with minimal, deterministic diffs while preserving CLI contracts, safety behavior, and test quality.
 
-## Mandatory read order
+## Mandatory context pack (read first)
 
-1. `ONBOARDING.md`
-2. `CLAUDE.md`
-3. `SKILLS.md`
-4. `AGENTS.md`
-5. `CONTRACTS.md`
-6. `TEST_STRATEGY.md`
-7. `COMMAND_EXAMPLES.md`
-8. `TEST_MATRIX.md`
-9. `ERROR_CATALOG.json`
-10. `ARCHITECTURE.md`
-11. `docs/CODE_STRUCTURE.md`
-12. `src/cli.rs`
-13. `src/main.rs`
-14. `tests/cli_atdd.rs`
-15. `scripts/simulate_cli_use_cases.sh`
+1. `AGENT_README.md`
+2. `CONTRACTS.md`
+3. `TEST_STRATEGY.md`
+4. `REPO_MAP.json`
+5. `ERROR_CATALOG.json`
+
+## Optional / on-demand context
+
+- `README.md`
+- `ARCHITECTURE.md`
+- `docs/CODE_STRUCTURE.md`
+- `AGENTS.md`
+- `SKILLS.md`
+- `ONBOARDING.md`
+- `COMMAND_EXAMPLES.md`
+- `TEST_MATRIX.md`
+- `src/cli.rs`
+- `src/main.rs`
 
 ## Non-negotiable constraints
 
@@ -50,6 +53,11 @@ Implement requested changes with minimal, deterministic diffs while preserving C
 1. `cargo check --all-targets`
 2. `cargo test`
 3. `./scripts/simulate_cli_use_cases.sh`
+
+## Harness truth sources
+
+- `tests/cli_atdd.rs` (CLI behavior truth)
+- `scripts/simulate_cli_use_cases.sh` (scenario truth)
 
 ## Delivery format
 

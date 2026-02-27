@@ -113,8 +113,10 @@ pub fn analyze(model: &RepoModel, config: Option<&HarnessConfig>) -> HarnessRepo
         });
     }
 
-    let mut recommendations = vec![
-        Recommendation::new(
+    let mut recommendations = Vec::new();
+
+    if !model.docs.has_context_index {
+        recommendations.push(Recommendation::new(
             "rec.context.index",
             "Add Context Index",
             "Create docs/context/INDEX.md and link it from AGENTS.md.",
@@ -122,8 +124,11 @@ pub fn analyze(model: &RepoModel, config: Option<&HarnessConfig>) -> HarnessRepo
             Effort::S,
             Risk::Safe,
             0.92,
-        ),
-        Recommendation::new(
+        ));
+    }
+
+    if config.is_none() || verification < 0.8 {
+        recommendations.push(Recommendation::new(
             "rec.verification.gate",
             "Enable Verification Gate",
             "Set pre_completion_required and provide required verification commands.",
@@ -131,8 +136,15 @@ pub fn analyze(model: &RepoModel, config: Option<&HarnessConfig>) -> HarnessRepo
             Effort::S,
             Risk::Medium,
             0.88,
-        ),
-        Recommendation::new(
+        ));
+    }
+
+    let has_tool_pressure = model.tools.tool_names.len() > 12
+        || model.tools.risky_overlap_clusters > 0
+        || model.tools.unrestricted_destructive > 0
+        || model.tools.has_ambiguous_duplicates;
+    if has_tool_pressure {
+        recommendations.push(Recommendation::new(
             "rec.tools.prune",
             "Prune Redundant Tools",
             "Reduce overlap in grep/find-style tool clusters and remove risky commands.",
@@ -140,8 +152,8 @@ pub fn analyze(model: &RepoModel, config: Option<&HarnessConfig>) -> HarnessRepo
             Effort::M,
             Risk::Medium,
             0.84,
-        ),
-    ];
+        ));
+    }
 
     let mut report = HarnessReport {
         overall_score: category_scores.overall,
@@ -234,5 +246,84 @@ disabled = ["apply_patch"]
             .findings
             .iter()
             .any(|finding| finding.id == "tools.disabled" && finding.blocking));
+    }
+
+    #[test]
+    fn analyze_does_not_recommend_tool_prune_without_tool_pressure() {
+        let model = base_model();
+        let config: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+        )
+        .expect("config should parse");
+
+        let report = analyze(&model, Some(&config));
+        assert!(
+            !report
+                .recommendations
+                .iter()
+                .any(|rec| rec.id == "rec.tools.prune")
+        );
+    }
+
+    #[test]
+    fn analyze_recommends_tool_prune_when_tool_pressure_exists() {
+        let mut model = base_model();
+        model.tools.risky_overlap_clusters = 1;
+        let config: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+        )
+        .expect("config should parse");
+
+        let report = analyze(&model, Some(&config));
+        assert!(
+            report
+                .recommendations
+                .iter()
+                .any(|rec| rec.id == "rec.tools.prune")
+        );
+    }
+
+    #[test]
+    fn analyze_skips_verification_gate_when_verification_is_complete() {
+        let model = base_model();
+        let config: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+        )
+        .expect("config should parse");
+
+        let report = analyze(&model, Some(&config));
+        assert!(
+            !report
+                .recommendations
+                .iter()
+                .any(|rec| rec.id == "rec.verification.gate")
+        );
     }
 }
