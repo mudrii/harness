@@ -245,6 +245,24 @@ fn run() -> Result<i32, HarnessError> {
                 bench_context: context,
                 runs: run_results,
             };
+
+            if let Some(compare_path) = &cmd.compare {
+                let baseline = load_bench_report(compare_path)?;
+                validate_bench_compare_compatibility(
+                    &report.bench_context,
+                    &baseline.bench_context,
+                    cmd.force_compare,
+                )?;
+                let current_avg = average_overall_score(&report.runs);
+                let baseline_avg = average_overall_score(&baseline.runs);
+                println!(
+                    "bench compare: baseline={:.3}, current={:.3}, delta={:.3}",
+                    baseline_avg,
+                    current_avg,
+                    current_avg - baseline_avg
+                );
+            }
+
             let report_path = write_bench_report(&cmd.path, &report)?;
             println!("bench report: {}", report_path.display());
             Ok(exit_code::SUCCESS)
@@ -337,7 +355,7 @@ fn init_context_index() -> &'static str {
 "#
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BenchContext {
     os: String,
     toolchain: String,
@@ -348,13 +366,13 @@ struct BenchContext {
     timestamp: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BenchRunResult {
     run: u32,
     overall_score: f32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BenchReport {
     bench_context: BenchContext,
     runs: Vec<BenchRunResult>,
@@ -409,6 +427,50 @@ fn write_bench_report(
     let payload = serde_json::to_string_pretty(report)?;
     std::fs::write(&out, payload).map_err(HarnessError::Io)?;
     Ok(out)
+}
+
+fn load_bench_report(path: &std::path::Path) -> Result<BenchReport, HarnessError> {
+    let payload = std::fs::read_to_string(path).map_err(HarnessError::Io)?;
+    serde_json::from_str(&payload).map_err(HarnessError::Json)
+}
+
+fn average_overall_score(runs: &[BenchRunResult]) -> f32 {
+    if runs.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = runs.iter().map(|run| run.overall_score).sum();
+    sum / runs.len() as f32
+}
+
+fn validate_bench_compare_compatibility(
+    current: &BenchContext,
+    baseline: &BenchContext,
+    force_compare: bool,
+) -> Result<(), HarnessError> {
+    let mut mismatches = Vec::new();
+    if current.os != baseline.os {
+        mismatches.push(format!("os (baseline={}, current={})", baseline.os, current.os));
+    }
+    if current.toolchain != baseline.toolchain {
+        mismatches.push(format!(
+            "toolchain (baseline={}, current={})",
+            baseline.toolchain, current.toolchain
+        ));
+    }
+    if current.repo_dirty != baseline.repo_dirty {
+        mismatches.push(format!(
+            "repo_dirty (baseline={}, current={})",
+            baseline.repo_dirty, current.repo_dirty
+        ));
+    }
+
+    if !mismatches.is_empty() && !force_compare {
+        return Err(HarnessError::ConfigParse(format!(
+            "bench compare blocked due to incompatible context: {}. Re-run with --force-compare to override.",
+            mismatches.join(", ")
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -544,6 +606,17 @@ mod tests {
     use super::*;
     use crate::types::report::{Effort, HarnessReport, Impact, Recommendation, Risk};
     use crate::types::scoring::ScoreCard;
+    fn make_bench_context(os: &str, toolchain: &str, repo_dirty: bool) -> BenchContext {
+        BenchContext {
+            os: os.to_string(),
+            toolchain: toolchain.to_string(),
+            repo_ref: "abc".to_string(),
+            repo_dirty,
+            harness_version: "0.1.0".to_string(),
+            suite: "default".to_string(),
+            timestamp: "2026-02-27T00:00:00Z".to_string(),
+        }
+    }
 
     #[test]
     fn render_optimize_report_orders_recommendations_by_priority() {
@@ -669,6 +742,42 @@ mod tests {
                 malformed: 2,
             }
         );
+    }
+
+    #[test]
+    fn bench_compare_rejects_mismatched_context_without_force() {
+        let current = make_bench_context("linux-x86_64", "rustc 1.77.0", false);
+        let baseline = make_bench_context("darwin-aarch64", "rustc 1.77.0", false);
+
+        let err = validate_bench_compare_compatibility(&current, &baseline, false)
+            .expect_err("compare should be blocked");
+        assert!(err.to_string().contains("bench compare blocked"));
+        assert!(err.to_string().contains("os"));
+    }
+
+    #[test]
+    fn bench_compare_allows_mismatched_context_with_force() {
+        let current = make_bench_context("linux-x86_64", "rustc 1.77.0", false);
+        let baseline = make_bench_context("darwin-aarch64", "rustc 1.77.0", false);
+
+        let result = validate_bench_compare_compatibility(&current, &baseline, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn bench_average_overall_score_handles_empty_and_non_empty_runs() {
+        assert!((average_overall_score(&[]) - 0.0).abs() < 0.001);
+        let runs = vec![
+            BenchRunResult {
+                run: 1,
+                overall_score: 0.6,
+            },
+            BenchRunResult {
+                run: 2,
+                overall_score: 0.8,
+            },
+        ];
+        assert!((average_overall_score(&runs) - 0.7).abs() < 0.001);
     }
 }
 

@@ -116,6 +116,10 @@ pub struct BenchCommand {
     pub suite: Option<String>,
     #[arg(long, default_value_t = 1)]
     pub runs: u32,
+    #[arg(long)]
+    pub compare: Option<PathBuf>,
+    #[arg(long)]
+    pub force_compare: bool,
 }
 
 #[derive(Args)]

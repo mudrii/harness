@@ -307,6 +307,77 @@ fn bench_writes_context_report_file() {
 }
 
 #[test]
+fn bench_compare_rejects_incompatible_context_without_force() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::create_dir_all(repo.path().join(".harness/bench")).expect("bench dir should create");
+    let baseline_path = repo.path().join(".harness/bench/baseline.json");
+    fs::write(
+        &baseline_path,
+        r#"{
+  "bench_context": {
+    "os": "different-os",
+    "toolchain": "rustc 1.77.0",
+    "repo_ref": "abc",
+    "repo_dirty": false,
+    "harness_version": "0.1.0",
+    "suite": "default",
+    "timestamp": "2026-02-27T00:00:00Z"
+  },
+  "runs": [
+    {"run": 1, "overall_score": 0.50}
+  ]
+}"#,
+    )
+    .expect("baseline report should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("bench")
+        .arg(repo.path())
+        .arg("--compare")
+        .arg(&baseline_path)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("bench compare blocked"));
+}
+
+#[test]
+fn bench_compare_allows_incompatible_context_with_force() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::create_dir_all(repo.path().join(".harness/bench")).expect("bench dir should create");
+    let baseline_path = repo.path().join(".harness/bench/baseline.json");
+    fs::write(
+        &baseline_path,
+        r#"{
+  "bench_context": {
+    "os": "different-os",
+    "toolchain": "rustc 1.77.0",
+    "repo_ref": "abc",
+    "repo_dirty": false,
+    "harness_version": "0.1.0",
+    "suite": "default",
+    "timestamp": "2026-02-27T00:00:00Z"
+  },
+  "runs": [
+    {"run": 1, "overall_score": 0.50}
+  ]
+}"#,
+    )
+    .expect("baseline report should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("bench")
+        .arg(repo.path())
+        .arg("--compare")
+        .arg(&baseline_path)
+        .arg("--force-compare")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("bench compare:"));
+}
+
+#[test]
 fn optimize_writes_report_file() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
