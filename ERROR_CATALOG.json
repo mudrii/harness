@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "exit_code_contract": {
+    "0": "success",
+    "1": "success_with_warnings",
+    "2": "blocking_policy_or_conformance",
+    "3": "runtime_or_fatal"
+  },
+  "errors": [
+    {
+      "key": "repo.not_git_repository",
+      "exit_code": 3,
+      "message_template": "not a git repository",
+      "remediation": "Run inside a git repository or initialize one with git init."
+    },
+    {
+      "key": "config.parse_error",
+      "exit_code": 3,
+      "message_template": "config parse error",
+      "remediation": "Fix TOML syntax in global, repo, or local override config."
+    },
+    {
+      "key": "config.invalid_project_profile",
+      "exit_code": 3,
+      "message_template": "unsupported project.profile",
+      "remediation": "Set profile to a supported value."
+    },
+    {
+      "key": "config.invalid_weights",
+      "exit_code": 3,
+      "message_template": "invalid metrics weights",
+      "remediation": "Use supported weight keys and valid sums per config contract."
+    },
+    {
+      "key": "apply.invalid_selector",
+      "exit_code": 3,
+      "message_template": "exactly one plan selector is required",
+      "remediation": "Pass --plan-file <path> xor --plan-all."
+    },
+    {
+      "key": "apply.path_traversal_rejected",
+      "exit_code": 3,
+      "message_template": "path traversal rejected",
+      "remediation": "Use a plan path within the repository scope."
+    },
+    {
+      "key": "apply.working_tree_dirty",
+      "exit_code": 3,
+      "message_template": "working tree is dirty",
+      "remediation": "Commit/stash changes or use --allow-dirty if appropriate."
+    },
+    {
+      "key": "policy.forbidden_command",
+      "exit_code": 2,
+      "message_template": "forbidden command by policy",
+      "remediation": "Replace command with allowed equivalent or update policy config."
+    },
+    {
+      "key": "policy.disabled_tool",
+      "exit_code": 2,
+      "message_template": "tool is disabled by lifecycle policy",
+      "remediation": "Use an allowed tool or change lifecycle configuration."
+    },
+    {
+      "key": "lint.blocking_violation",
+      "exit_code": 2,
+      "message_template": "blocking lint violation",
+      "remediation": "Resolve policy/conformance violations before proceeding."
+    },
+    {
+      "key": "lint.warning_only",
+      "exit_code": 1,
+      "message_template": "warning-level findings",
+      "remediation": "Review warnings and remediate if needed."
+    }
+  ]
+}

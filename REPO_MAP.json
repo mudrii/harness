@@ -1,0 +1,97 @@
+{
+  "project": "harness",
+  "language": "rust",
+  "binary": "harness",
+  "entrypoints": [
+    "src/main.rs",
+    "src/cli.rs"
+  ],
+  "core_docs": [
+    "README.md",
+    "ARCHITECTURE.md",
+    "docs/CODE_STRUCTURE.md",
+    "AGENTS.md",
+    "CONTRACTS.md",
+    "TEST_STRATEGY.md",
+    "SKILLS.md"
+  ],
+  "modules": [
+    {
+      "name": "cli",
+      "path": "src/cli.rs",
+      "responsibility": "Argument and subcommand contract"
+    },
+    {
+      "name": "config",
+      "path": "src/config.rs",
+      "responsibility": "Load and merge config layers"
+    },
+    {
+      "name": "types.config",
+      "path": "src/types/config.rs",
+      "responsibility": "Typed config schema and validation"
+    },
+    {
+      "name": "scan",
+      "path": "src/scan/",
+      "responsibility": "Repository discovery and metadata"
+    },
+    {
+      "name": "analyze",
+      "path": "src/analyze/",
+      "responsibility": "Signals, findings, scoring inputs"
+    },
+    {
+      "name": "optimization",
+      "path": "src/optimization/",
+      "responsibility": "Recommendation ranking and thresholds"
+    },
+    {
+      "name": "generator",
+      "path": "src/generator/",
+      "responsibility": "Plan generation, apply, rollback manifests"
+    },
+    {
+      "name": "guardrails",
+      "path": "src/guardrails/",
+      "responsibility": "Tool policy and loop/risk checks"
+    },
+    {
+      "name": "trace",
+      "path": "src/trace/",
+      "responsibility": "Trace parsing and aggregation"
+    },
+    {
+      "name": "report",
+      "path": "src/report/",
+      "responsibility": "Markdown, JSON, SARIF output"
+    }
+  ],
+  "tests": {
+    "unit": "src/** (inline #[cfg(test)])",
+    "cli_atdd": "tests/cli_atdd.rs",
+    "integration": "tests/integration.rs",
+    "simulation": "scripts/simulate_cli_use_cases.sh"
+  },
+  "release": {
+    "workflow": ".github/workflows/release-binaries.yml",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin"
+    ]
+  },
+  "contracts": {
+    "exit_codes": {
+      "0": "success",
+      "1": "success_with_warnings",
+      "2": "blocking_policy_or_conformance",
+      "3": "runtime_or_fatal"
+    },
+    "read_only_commands": [
+      "analyze",
+      "suggest"
+    ],
+    "safety_critical_command": "apply"
+  }
+}
