@@ -19,11 +19,17 @@ pub enum Commands {
     Lint(LintCommand),
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Profile {
+    General,
+    Agent,
+}
+
 #[derive(Args)]
 pub struct InitCommand {
     pub path: PathBuf,
-    #[arg(long, default_value = "general")]
-    pub profile: String,
+    #[arg(long, value_enum, default_value = "general")]
+    pub profile: Profile,
     #[arg(long)]
     pub dry_run: bool,
     #[arg(long)]
@@ -53,6 +59,10 @@ pub struct ApplyCommand {
     pub plan_file: Option<String>,
     #[arg(long, default_value = "preview")]
     pub apply_mode: String,
+    #[arg(long)]
+    pub allow_dirty: bool,
+    #[arg(long, short)]
+    pub yes: bool,
 }
 
 #[derive(Args)]

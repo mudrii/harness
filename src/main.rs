@@ -15,7 +15,7 @@ fn main() {
         }
         cli::Commands::Init(cmd) => {
             println!(
-                "init requested for {} with profile {}",
+                "init requested for {} with profile {:?}",
                 cmd.path.display(),
                 cmd.profile
             );

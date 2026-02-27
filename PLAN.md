@@ -9,6 +9,8 @@ Assumptions:
 - The CLI does not replace the model provider or orchestration platform.
 - Repository structure and files are the primary source of truth for optimization.
 - Tool use should be safe by default, with explicit opt-in to high-risk operations.
+- Git is required in v1. Non-git VCS support is deferred.
+- Configuration uses TOML only in v1. YAML support is dropped.
 
 ## 1) Reference-source synthesis and interpretation
 
@@ -141,9 +143,18 @@ Behavior:
 - Writes changed files only after explicit confirmation.
 - Idempotent application and conflict awareness.
 
+Preconditions (checked in order before any writes):
+1. Clean working tree required (abort if dirty, unless `--allow-dirty`).
+2. Plan file must exist, parse, have no path traversal, and match harness version.
+3. Rollback manifest written to `.harness/rollback/<timestamp>.json` (file list + SHA256 hashes).
+4. Change scope summary printed (files modified/created/deleted with names).
+5. Explicit `y/N` confirmation in apply mode (skipped in preview mode or with `--yes`).
+
 Required flags:
 - `--plan-file path` or `--plan all`.
 - `--apply-mode {preview,apply}`
+- `--allow-dirty` (skip clean working tree check)
+- `--yes` / `-y` (skip confirmation prompt)
 
 ### 4.5 `harness optimize <path>`
 
@@ -161,7 +172,9 @@ Goal: benchmark and compare before/after harness revisions.
 Behavior:
 - Execute benchmark suite commands.
 - Persist run metrics (`success_rate`, `median_steps`, `tool_calls`, `token_est`, `wall_ms`).
+- Persist `bench_context` per run: OS, toolchain, repo ref, dirty state, harness version, config hash, env vars, command, seed, timestamp.
 - Compare variant runs and identify regressions.
+- Comparison guard: refuse to compare runs with different OS, toolchain, or dirty state unless `--force-compare`.
 
 ### 4.7 `harness lint <path>`
 
@@ -178,8 +191,10 @@ Checks:
 ### 5.1 Configuration hierarchy
 
 1. Global config: `$HOME/.config/harness/config.toml`
-2. Repo config: `harness.toml` or `.harness.yaml`
+2. Repo config: `harness.toml`
 3. Repo local override: `.harness/local.toml`
+
+Note: YAML config (`.harness.yaml`) is not supported in v1. TOML is the only format.
 
 Merge order: global < repo < local override.
 
@@ -205,6 +220,16 @@ forbidden = ["sudo", "ssh", "nc", "mkfs", "fdisk"]
 [tools.specialized]
 extra = [] # examples: {name = "search", command = "./scripts/search.sh"}
 
+[tools.deprecated]
+observe = []      # Phase 1: allowed, non-blocking warning in report
+deprecated = []   # Phase 2: allowed, blocking finding in report, lint violation
+disabled = []     # Phase 3: moved to forbidden on next apply
+
+[tools.aliases]
+# Known aliases that inherit parent tool classification
+# grep = "rg"
+# find = "fd"
+
 [verification]
 required = ["cargo check", "cargo test", "cargo fmt --check"]
 pre_completion_required = true
@@ -216,10 +241,22 @@ coding_prompt = ".harness/coding.prompt.md"
 progress_file = ".harness/progress.md"
 feature_state_file = ".harness/feature_list.json"
 state_schema_version = 1
+log_sampling = "milestones"      # milestones|all|none
+batch_interval_secs = 60
+max_log_size_kb = 100
+retained_logs = 3
+
+[optimization]
+min_traces = 30                  # minimum traces per revision before recommendations
+min_uplift_abs = 0.05            # completion rate delta threshold (5pp)
+min_uplift_rel = 0.10            # token/step delta threshold (10%)
+trace_staleness_days = 90        # exclude traces older than this
+task_overlap_threshold = 0.50    # minimum task overlap for paired comparison
 
 [metrics]
 weights = { context = 0.30, tools = 0.25, continuity = 0.20, verification = 0.15, repository_quality = 0.10 }
 max_risk_tolerance = 0.35
+max_penalty_per_bucket = 0.40  # no single penalty class can reduce a sub-score by more than this
 
 [workflow]
 max_consecutive_failures = 2
@@ -285,7 +322,7 @@ replan_on_loop = true
 
 ### 7.1 Formula
 
-`overall_score = Σ(weight_i * score_i)`
+`overall_score = Σ(weight_i * clamp(score_i, 0.0, 1.0))`
 
 - context: 0.30
 - tools: 0.25
@@ -293,7 +330,13 @@ replan_on_loop = true
 - verification: 0.15
 - repository_quality: 0.10
 
-`score_i ∈ [0.0, 1.0]`
+`score_i ∈ [0.0, 1.0]` (clamped after all bonuses/penalties)
+
+Normalization rules:
+- Each sub-score is clamped to [0.0, 1.0] after all additive rules.
+- No single penalty bucket can reduce a sub-score by more than `max_penalty_per_bucket` (default 0.40).
+- Overall score is guaranteed in [0.0, 1.0] since weights sum to 1.0 and each clamped score is in [0,1].
+- Recommendation tie-breaking: impact (high > medium > low), then effort (xs < s < m < l), then alphabetical ID.
 
 ### 7.2 Rule-based subscore examples
 
@@ -371,12 +414,20 @@ Each recommendation includes:
 
 ### 9.3 Continuity defaults
 
-- Every command run appends state snippet to `.harness/progress.md`:
+Events are classified and logged selectively:
+- **Milestone events** (always logged): task start, task complete, verification pass/fail, error.
+- **Progress events** (sampled per `log_sampling` config): individual command runs, file reads/writes.
+
+Progress events accumulate in memory and flush on milestone events or every `batch_interval_secs` (default 60s).
+
+Each logged entry in `.harness/progress.md` includes:
   - timestamp,
   - feature,
   - action,
   - evidence,
   - next state.
+
+Log rotation: when `progress.md` exceeds `max_log_size_kb` (default 100KB), rotate to `progress-<date>.md`. Keep last `retained_logs` (default 3) rotated files.
 
 ## 10) Trace-driven improvement loop
 
@@ -389,6 +440,13 @@ Each recommendation includes:
 4. Detect repeated failure signature clusters.
 5. Propose rule adjustments with priority ordering.
 6. Run `bench` again to validate improvements.
+
+Statistical gates (all configurable via `[optimization]` manifest section):
+- Minimum `min_traces` (default 30) per revision before generating recommendations. Below threshold: "insufficient data".
+- Completion rate recommendations require `|Δ| ≥ min_uplift_abs` (default 0.05, i.e., 5pp).
+- Token/step recommendations require `|Δ| ≥ min_uplift_rel` (default 0.10, i.e., 10%).
+- Paired comparisons require `task_overlap_threshold` (default 0.50) overlap on the same task set.
+- Traces older than `trace_staleness_days` (default 90) are excluded.
 
 Acceptance criterion for every change:
 - no negative regression in completion rate for top 10 representative tasks.
@@ -495,6 +553,8 @@ src/
 - Clear audit trail: every generated file starts with metadata header.
 - Optional signature policy for generated files (hash in manifest).
 - Optional org-level profile restrictions (no overrides for critical commands).
+- Tool deprecation lifecycle: 3-phase (observe -> deprecated -> disabled) with rollback triggers when trace data shows >10% completion rate drop.
+- Command policy uses alias expansion and argument-aware matching to prevent bypass via wrappers. Namespace-based classification (fs/net/vcs/exec) designed for v1.1.
 
 ## 14) Business plan and adoption model
 
