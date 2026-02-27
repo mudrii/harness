@@ -50,6 +50,13 @@ fn policy_from_config(config: Option<&HarnessConfig>) -> command_policy::Command
                 }
             }
         }
+        if let Some(deprecated) = &tools.deprecated {
+            for command in &deprecated.disabled {
+                if !command.is_empty() {
+                    policy.forbidden.push(command.clone());
+                }
+            }
+        }
         if let Some(aliases) = &tools.aliases {
             for (alias, target) in aliases {
                 policy.aliases.insert(alias.clone(), target.clone());
@@ -101,6 +108,24 @@ forbidden = ["git push --force"]
         .expect("config should parse");
 
         let result = validate_with_config(&["gpf origin main"], 0, Some(&cfg));
+        assert!(matches!(result, Err(HarnessError::ForbiddenToolAccess(_))));
+    }
+
+    #[test]
+    fn test_validate_with_config_rejects_disabled_tool_command() {
+        let cfg: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+disabled = ["apply_patch"]
+"#,
+        )
+        .expect("config should parse");
+
+        let result = validate_with_config(&["apply_patch"], 0, Some(&cfg));
         assert!(matches!(result, Err(HarnessError::ForbiddenToolAccess(_))));
     }
 }

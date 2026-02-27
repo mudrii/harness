@@ -65,7 +65,12 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
 
     let recommendation_ids = resolve_plan(&cmd.path, cmd, loaded.as_ref())?;
     let changes = build_changes(&cmd.path, &recommendation_ids)?;
-    guardrails::validate_with_config(&[], changes.len() as u32, loaded.as_ref())?;
+    let planned_commands: Vec<&str> = if changes.is_empty() {
+        Vec::new()
+    } else {
+        vec!["apply_patch"]
+    };
+    guardrails::validate_with_config(&planned_commands, changes.len() as u32, loaded.as_ref())?;
 
     print_scope_summary(&cmd.path, &changes);
     if changes.is_empty() {

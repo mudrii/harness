@@ -199,6 +199,31 @@ profile = "general"
 }
 
 #[test]
+fn lint_reports_blocking_when_tools_are_deprecated() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+deprecated = ["grep"]
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("lint")
+        .arg(repo.path())
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("tools.deprecated"));
+}
+
+#[test]
 fn suggest_outputs_ranked_recommendations() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
@@ -408,6 +433,35 @@ fn optimize_writes_report_file() {
         report_content.contains("insufficient data"),
         "optimize should gate recommendations when traces are below threshold"
     );
+}
+
+#[test]
+fn apply_rejects_disabled_tool_policy() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+disabled = ["apply_patch"]
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("preview")
+        .arg("--allow-dirty")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("forbidden tool access attempt"));
 }
 
 #[test]

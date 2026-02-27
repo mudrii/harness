@@ -52,6 +52,47 @@ pub fn analyze(model: &RepoModel, config: Option<&HarnessConfig>) -> HarnessRepo
             file: Some("harness.toml".to_string()),
         });
     }
+    if let Some(deprecated) = config
+        .and_then(|cfg| cfg.tools.as_ref())
+        .and_then(|tools| tools.deprecated.as_ref())
+    {
+        if !deprecated.observe.is_empty() {
+            findings.push(Finding {
+                id: "tools.observe".to_string(),
+                title: "Observed tools scheduled for deprecation".to_string(),
+                body: format!(
+                    "Observed tools are still allowed but tracked: {}.",
+                    deprecated.observe.join(", ")
+                ),
+                blocking: false,
+                file: Some("harness.toml".to_string()),
+            });
+        }
+        if !deprecated.deprecated.is_empty() {
+            findings.push(Finding {
+                id: "tools.deprecated".to_string(),
+                title: "Deprecated tools still enabled".to_string(),
+                body: format!(
+                    "Deprecated tools should be migrated off active workflows: {}.",
+                    deprecated.deprecated.join(", ")
+                ),
+                blocking: true,
+                file: Some("harness.toml".to_string()),
+            });
+        }
+        if !deprecated.disabled.is_empty() {
+            findings.push(Finding {
+                id: "tools.disabled".to_string(),
+                title: "Disabled tools are configured".to_string(),
+                body: format!(
+                    "Disabled tools are forbidden on apply and must not be used: {}.",
+                    deprecated.disabled.join(", ")
+                ),
+                blocking: true,
+                file: Some("harness.toml".to_string()),
+            });
+        }
+    }
     if config.is_some() && verification < 0.5 {
         findings.push(Finding {
             id: "verification.incomplete".to_string(),
@@ -133,9 +174,8 @@ mod tests {
     use crate::scan::{ContinuitySignals, QualitySignals};
     use std::path::PathBuf;
 
-    #[test]
-    fn analyze_generates_warning_when_config_is_missing() {
-        let model = RepoModel {
+    fn base_model() -> RepoModel {
+        RepoModel {
             root: PathBuf::from("."),
             file_count: 100,
             docs: DocSignals {
@@ -149,7 +189,12 @@ mod tests {
             tools: ToolSignals::default(),
             continuity: ContinuitySignals::default(),
             quality: QualitySignals::default(),
-        };
+        }
+    }
+
+    #[test]
+    fn analyze_generates_warning_when_config_is_missing() {
+        let model = base_model();
 
         let report = analyze(&model, None);
         assert!(report
@@ -157,5 +202,37 @@ mod tests {
             .iter()
             .any(|finding| finding.id == "verification.missing_config" && !finding.blocking));
         assert!((0.0..=1.0).contains(&report.overall_score));
+    }
+
+    #[test]
+    fn analyze_emits_deprecation_lifecycle_findings() {
+        let model = base_model();
+        let config: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+observe = ["find"]
+deprecated = ["grep"]
+disabled = ["apply_patch"]
+"#,
+        )
+        .expect("config should parse");
+
+        let report = analyze(&model, Some(&config));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.id == "tools.observe" && !finding.blocking));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.id == "tools.deprecated" && finding.blocking));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.id == "tools.disabled" && finding.blocking));
     }
 }
