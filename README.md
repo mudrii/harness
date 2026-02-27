@@ -62,10 +62,13 @@ harness lint /path/to/repo
 
 ## Documentation
 
+- Agent first-read guide: `AGENT_README.md`
 - Architecture: `ARCHITECTURE.md`
 - Code structure map: `docs/CODE_STRUCTURE.md`
 - Installation and upgrade: `docs/INSTALLATION.md`
 - Product and implementation plan: `PLAN.md`
+
+> For any agent-driven development in this repository, start with `AGENT_README.md` before making changes.
 
 ## Development
 
