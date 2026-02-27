@@ -1,5 +1,5 @@
-pub mod templates;
 pub mod manifest;
+pub mod templates;
 pub mod writer;
 
 pub fn render() {

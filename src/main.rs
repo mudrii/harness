@@ -2,13 +2,13 @@ mod analyze;
 mod cli;
 mod config;
 mod error;
+mod generator;
 mod guardrails;
 mod report;
 mod scan;
 mod types;
 // Deferred modules (uncomment when implementing):
 // mod optimization;
-// mod generator;
 // mod trace;
 
 use crate::error::HarnessError;
@@ -83,12 +83,13 @@ fn run() -> Result<i32, HarnessError> {
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Apply(cmd) => {
-            println!(
-                "apply requested for {} (mode={:?}, plan_all={})",
-                cmd.path.display(),
-                cmd.apply_mode,
-                cmd.plan_all
-            );
+            if !cmd.path.exists() {
+                return Err(HarnessError::PathNotFound(cmd.path.display().to_string()));
+            }
+            if !cmd.path.join(".git").exists() {
+                return Err(HarnessError::NotGitRepo(cmd.path.display().to_string()));
+            }
+            generator::writer::execute_apply(&cmd)?;
             Ok(exit_code::SUCCESS)
         }
         cli::Commands::Optimize(cmd) => {

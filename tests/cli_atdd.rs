@@ -3,7 +3,17 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::process::Command as ProcessCommand;
 use tempfile::TempDir;
+
+fn init_git_repo(path: &std::path::Path) {
+    let output = ProcessCommand::new("git")
+        .arg("init")
+        .current_dir(path)
+        .output()
+        .expect("git init should run");
+    assert!(output.status.success(), "git init should succeed");
+}
 
 #[test]
 fn apply_requires_exactly_one_plan_selector() {
@@ -28,6 +38,57 @@ fn apply_rejects_both_plan_selectors() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn apply_rejects_plan_file_path_traversal() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-file")
+        .arg("../plan.json")
+        .arg("--apply-mode")
+        .arg("preview")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("path traversal rejected"));
+}
+
+#[test]
+fn apply_plan_all_preview_prints_scope() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("preview")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("scope:"))
+        .stdout(predicate::str::contains("docs/context/INDEX.md"));
+}
+
+#[test]
+fn apply_rejects_dirty_worktree_without_allow_dirty() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+    fs::write(repo.path().join("untracked.txt"), "dirty").expect("dirty file should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("preview")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("working tree is dirty"));
 }
 
 #[test]
