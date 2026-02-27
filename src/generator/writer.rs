@@ -334,6 +334,7 @@ fn create_rollback_manifest(root: &Path, changes: &[PlannedChange]) -> Result<Pa
             sha256,
         });
     }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
 
     let manifest = RollbackManifest {
         timestamp: timestamp_string,
@@ -443,5 +444,38 @@ mod tests {
 
         let result = resolve_plan(tmp.path(), &cmd, None);
         assert!(result.is_err(), "unknown recommendation id should fail");
+    }
+
+    #[test]
+    fn test_rollback_manifest_files_are_sorted_by_path() {
+        let tmp = TempDir::new().expect("temp dir should create");
+        let existing = tmp.path().join("b.txt");
+        fs::write(&existing, "existing").expect("existing file should write");
+
+        let changes = vec![
+            PlannedChange {
+                path: existing,
+                action: ChangeAction::Modify,
+                content: "updated".to_string(),
+            },
+            PlannedChange {
+                path: tmp.path().join("a.txt"),
+                action: ChangeAction::Create,
+                content: "new".to_string(),
+            },
+        ];
+
+        let manifest_path =
+            create_rollback_manifest(tmp.path(), &changes).expect("manifest should write");
+        let manifest_raw =
+            fs::read_to_string(manifest_path).expect("manifest content should be readable");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&manifest_raw).expect("manifest should be valid json");
+        let files = parsed["files"]
+            .as_array()
+            .expect("files should be an array");
+
+        assert_eq!(files[0]["path"].as_str(), Some("a.txt"));
+        assert_eq!(files[1]["path"].as_str(), Some("b.txt"));
     }
 }
