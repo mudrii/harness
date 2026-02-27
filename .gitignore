@@ -1,3 +1,6 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+/dist/
+/PLAN.local.md
+/docs/plans/local/
