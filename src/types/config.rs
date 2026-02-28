@@ -1,6 +1,6 @@
 use crate::error::HarnessError;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessConfig {
@@ -265,6 +265,14 @@ impl HarnessConfig {
             }
         }
 
+        if let Some(deprecated) = self
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.deprecated.as_ref())
+        {
+            validate_tool_deprecation_lifecycle(deprecated)?;
+        }
+
         if let Some(optimization) = &self.optimization {
             if let Some(min_traces) = optimization.min_traces {
                 if min_traces == 0 {
@@ -306,6 +314,38 @@ impl HarnessConfig {
 
         Ok(())
     }
+}
+
+fn validate_tool_deprecation_lifecycle(deprecated: &ToolDeprecated) -> Result<(), HarnessError> {
+    let mut seen = HashMap::<String, &'static str>::new();
+    for (stage, tools) in [
+        ("observe", &deprecated.observe),
+        ("deprecated", &deprecated.deprecated),
+        ("disabled", &deprecated.disabled),
+    ] {
+        let mut stage_seen = HashSet::<String>::new();
+        for tool in tools {
+            let normalized = tool.trim();
+            if normalized.is_empty() {
+                return Err(HarnessError::ConfigParse(format!(
+                    "tools.deprecated.{stage} entries must be non-empty command names"
+                )));
+            }
+            if !stage_seen.insert(normalized.to_string()) {
+                return Err(HarnessError::ConfigParse(format!(
+                    "tools.deprecated.{stage} contains duplicate tool: {normalized}"
+                )));
+            }
+            if let Some(existing_stage) = seen.get(normalized) {
+                return Err(HarnessError::ConfigParse(format!(
+                    "tool '{normalized}' cannot appear in both tools.deprecated.{existing_stage} and tools.deprecated.{stage}"
+                )));
+            }
+            seen.insert(normalized.to_string(), stage);
+        }
+    }
+
+    Ok(())
 }
 
 pub type Config = HarnessConfig;
@@ -539,6 +579,55 @@ profile = "general"
 [metrics]
 max_risk_tolerance = 1.0
 max_penalty_per_bucket = 0.0
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_tool_in_multiple_deprecation_stages() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "general"
+
+[tools.deprecated]
+observe = ["grep"]
+deprecated = ["grep"]
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.to_string().contains("cannot appear in both"));
+        assert!(err.to_string().contains("tools.deprecated.observe"));
+        assert!(err.to_string().contains("tools.deprecated.deprecated"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_deprecation_entry() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "general"
+
+[tools.deprecated]
+observe = [" "]
+"#;
+        let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.to_string().contains("must be non-empty command names"));
+    }
+
+    #[test]
+    fn validate_accepts_distinct_deprecation_stages() {
+        let toml_str = r#"
+[project]
+name = "test"
+profile = "general"
+
+[tools.deprecated]
+observe = ["find"]
+deprecated = ["grep"]
+disabled = ["apply_patch"]
 "#;
         let cfg: HarnessConfig = toml::from_str(toml_str).expect("config should parse");
         assert!(cfg.validate().is_ok());

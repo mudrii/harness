@@ -285,6 +285,36 @@ fn lint_returns_warning_when_git_repo_has_no_repo_config() {
 }
 
 #[test]
+fn lint_reports_non_blocking_when_tools_are_observed() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+
+[tools.deprecated]
+observe = ["grep"]
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("lint")
+        .arg(repo.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("tools.observe"));
+}
+
+#[test]
 fn lint_returns_blocking_when_verification_is_incomplete() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");

@@ -543,6 +543,11 @@ overlap_clusters = [["rg", "grep"], ["fd", "find"]]
 destructive = ["git push --force", "rm -rf"]
 forbidden = ["git push --force", "git reset --hard", "rm -rf"]
 
+[tools.deprecated]
+observe = []
+deprecated = []
+disabled = []
+
 [verification]
 required = ["cargo fmt --check", "cargo test"]
 pre_completion_required = true
@@ -559,6 +564,11 @@ commands = ["rg", "fd", "git"]
 overlap_clusters = [["rg", "grep"], ["fd", "find"]]
 destructive = ["git push --force", "rm -rf"]
 forbidden = ["git push --force", "git reset --hard", "rm -rf"]
+
+[tools.deprecated]
+observe = []
+deprecated = []
+disabled = []
 
 [verification]
 required = ["cargo fmt --check", "cargo test"]
