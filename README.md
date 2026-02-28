@@ -11,6 +11,11 @@ It focuses on:
 
 `harness` is in active development. Core commands are implemented and covered with unit tests, integration tests, and CLI ATDD scenarios.
 
+Current lifecycle behavior for `tools.deprecated`:
+- `observe`: warning finding (`tools.observe`), non-blocking.
+- `deprecated`: blocking lint finding (`tools.deprecated`).
+- `disabled`: treated as forbidden in apply/guardrails.
+
 ## Requirements
 
 - Rust stable toolchain (Cargo + rustc)
@@ -46,7 +51,7 @@ Detailed installation guide and troubleshooting: `docs/INSTALLATION.md`.
 ```bash
 harness analyze /path/to/repo --format markdown
 harness suggest /path/to/repo --format json
-harness apply /path/to/repo --plan-file .harness/plans/latest.json --preview
+harness apply /path/to/repo --plan-file .harness/plans/latest.json --apply-mode preview
 harness lint /path/to/repo
 ```
 
@@ -72,6 +77,7 @@ harness lint /path/to/repo
 - Optional/on-demand docs:
   - `ARCHITECTURE.md`
   - `docs/CODE_STRUCTURE.md`
+  - `docs/CLI_SIMULATION.md`
   - `PLAN.md`
   - `COMMAND_EXAMPLES.md`
   - `TEST_MATRIX.md`

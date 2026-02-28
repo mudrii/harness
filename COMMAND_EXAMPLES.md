@@ -53,6 +53,10 @@ Expected:
 - no write in preview mode
 - exit `0`
 
+Expected with lifecycle policy:
+- if config marks tool only under `tools.deprecated.deprecated`, apply remains allowed
+- if config marks tool under `tools.deprecated.disabled`, apply is rejected (exit `3`)
+
 ```bash
 harness apply /path/to/repo --apply-mode preview
 ```
@@ -78,6 +82,10 @@ harness lint /path/to/repo
 Expected:
 - policy/conformance findings
 - exit `0`, `1`, or `2` depending severity
+
+Lifecycle-specific expectations:
+- `tools.deprecated.observe` only -> warning output including `tools.observe`, exit `1`
+- `tools.deprecated.deprecated` present -> blocking output including `tools.deprecated`, exit `2`
 
 ## Optimize
 

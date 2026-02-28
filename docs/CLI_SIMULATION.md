@@ -40,6 +40,13 @@ Current simulation matrix:
 6. `apply --plan-all --apply-mode preview` fails on dirty worktree without override (exit `3`)
 7. `lint` blocks deprecated tools configuration (exit `2`)
 
+Note:
+- Additional lifecycle scenarios are covered in CLI ATDD:
+  - `observe` warning behavior
+  - `deprecated` apply-allowed behavior
+  - `disabled` apply-block behavior
+  (see `tests/cli_atdd.rs`)
+
 ## 4. CI usage recommendation
 
 Add this simulation runner as a separate CI job after build:

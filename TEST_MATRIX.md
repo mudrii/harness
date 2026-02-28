@@ -25,6 +25,10 @@ Map command acceptance criteria to verification layers.
 5. Malformed config parse failure.
 6. Invalid config validation failure.
 7. Disabled/forbidden policy rejection.
+8. Lifecycle stage semantics:
+   - `observe` warning-only
+   - `deprecated` lint-blocking but apply-allowed
+   - `disabled` apply-blocking
 
 ## Default verification sequence
 

@@ -36,6 +36,10 @@ Implement requested changes with minimal, deterministic diffs while preserving C
 3. Treat `apply` as safety-critical and do not bypass preconditions.
 4. Do not commit `target/`, `dist/`, or local-only planning files.
 5. Do not change command contracts unless explicitly requested.
+6. Keep lifecycle semantics stable:
+   - `observe` = warning only
+   - `deprecated` = blocking lint finding
+   - `disabled` = forbidden on apply/guardrails
 
 ## Implementation policy
 

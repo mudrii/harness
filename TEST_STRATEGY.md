@@ -25,6 +25,14 @@ Define how acceptance criteria are verified with TDD and ATDD.
 5. Path traversal rejection for plan files.
 6. Dirty worktree rejection when not allowed.
 7. Forbidden/disabled policy violations.
+8. Invalid lifecycle config (empty tool names, duplicate tool across lifecycle stages).
+
+## Mandatory lifecycle coverage
+
+1. `observe` stage produces warning-only lint output.
+2. `deprecated` stage produces blocking lint output.
+3. `deprecated` stage does not block `apply` by itself.
+4. `disabled` stage blocks `apply`/guardrails.
 
 ## Acceptance-to-test mapping
 

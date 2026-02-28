@@ -56,3 +56,10 @@
 1. Enforces profile and policy conformance.
 2. Blocking violations return exit code `2`.
 3. Warning-only states return exit code `1`.
+
+## Tool deprecation lifecycle contract
+
+1. `tools.deprecated.observe` emits warning finding `tools.observe` and is non-blocking.
+2. `tools.deprecated.deprecated` emits blocking finding `tools.deprecated` in `lint` (exit `2`).
+3. `tools.deprecated.disabled` is treated as forbidden in guardrails/apply (runtime rejection with exit `3`).
+4. The same tool name cannot be configured in multiple lifecycle stages.
