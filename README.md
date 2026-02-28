@@ -7,6 +7,8 @@ It focuses on:
 - deterministic quality and verification signals,
 - safe, reviewable change planning and apply flows.
 
+![Harness architecture blueprint](docs/assets/social/harness-launch-option-3-architecture-blueprint.svg)
+
 ## Status
 
 `harness` is in active development. Core commands are implemented and covered with unit tests, integration tests, and CLI ATDD scenarios.
