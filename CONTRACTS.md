@@ -61,5 +61,7 @@
 
 1. `tools.deprecated.observe` emits warning finding `tools.observe` and is non-blocking.
 2. `tools.deprecated.deprecated` emits blocking finding `tools.deprecated` in `lint` (exit `2`).
-3. `tools.deprecated.disabled` is treated as forbidden in guardrails/apply (runtime rejection with exit `3`).
-4. The same tool name cannot be configured in multiple lifecycle stages.
+3. `tools.deprecated.disabled` is promoted into `tools.baseline.forbidden` on `apply --apply-mode apply`.
+4. `tools.deprecated.disabled` is treated as forbidden in guardrails/apply (runtime rejection with exit `3` when violated).
+5. `apply --apply-mode preview` remains no-write and does not persist lifecycle promotion.
+6. The same tool name cannot be configured in multiple lifecycle stages.

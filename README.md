@@ -14,7 +14,7 @@ It focuses on:
 Current lifecycle behavior for `tools.deprecated`:
 - `observe`: warning finding (`tools.observe`), non-blocking.
 - `deprecated`: blocking lint finding (`tools.deprecated`).
-- `disabled`: treated as forbidden in apply/guardrails.
+- `disabled`: promoted into `tools.baseline.forbidden` on `apply --apply-mode apply`; still forbidden in apply/guardrails.
 
 ## Requirements
 

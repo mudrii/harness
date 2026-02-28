@@ -645,6 +645,126 @@ deprecated = ["apply_patch"]
 }
 
 #[test]
+fn apply_promotes_disabled_tools_to_baseline_forbidden() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+    fs::create_dir_all(repo.path().join("docs/context")).expect("context dir should create");
+    fs::write(repo.path().join("AGENTS.md"), "# Agents\nmap\n").expect("agents should write");
+    fs::write(repo.path().join("docs/context/INDEX.md"), "index").expect("index should write");
+    fs::write(repo.path().join("ARCHITECTURE.md"), "# Architecture\n").expect("arch should write");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.baseline]
+forbidden = ["git push --force"]
+
+[tools.deprecated]
+disabled = ["grep"]
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("apply")
+        .arg("--allow-dirty")
+        .arg("--yes")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("apply complete"));
+
+    let content =
+        fs::read_to_string(repo.path().join("harness.toml")).expect("config should be readable");
+    let parsed: toml::Value = toml::from_str(&content).expect("config should parse");
+    let forbidden = parsed
+        .get("tools")
+        .and_then(|tools| tools.get("baseline"))
+        .and_then(|baseline| baseline.get("forbidden"))
+        .and_then(toml::Value::as_array)
+        .expect("forbidden should be an array")
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(forbidden.contains(&"git push --force"));
+    assert!(forbidden.contains(&"grep"));
+
+    let disabled = parsed
+        .get("tools")
+        .and_then(|tools| tools.get("deprecated"))
+        .and_then(|deprecated| deprecated.get("disabled"))
+        .and_then(toml::Value::as_array)
+        .expect("disabled should be an array");
+    assert!(disabled.is_empty(), "disabled should be cleared after apply");
+}
+
+#[test]
+fn apply_preview_does_not_promote_disabled_tools() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+    fs::create_dir_all(repo.path().join("docs/context")).expect("context dir should create");
+    fs::write(repo.path().join("AGENTS.md"), "# Agents\nmap\n").expect("agents should write");
+    fs::write(repo.path().join("docs/context/INDEX.md"), "index").expect("index should write");
+    fs::write(repo.path().join("ARCHITECTURE.md"), "# Architecture\n").expect("arch should write");
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.baseline]
+forbidden = ["git push --force"]
+
+[tools.deprecated]
+disabled = ["grep"]
+
+[verification]
+required = ["cargo check"]
+pre_completion_required = true
+loop_guard_enabled = true
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("preview")
+        .arg("--allow-dirty")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("preview: no files were written"));
+
+    let content =
+        fs::read_to_string(repo.path().join("harness.toml")).expect("config should be readable");
+    let parsed: toml::Value = toml::from_str(&content).expect("config should parse");
+    let disabled = parsed
+        .get("tools")
+        .and_then(|tools| tools.get("deprecated"))
+        .and_then(|deprecated| deprecated.get("disabled"))
+        .and_then(toml::Value::as_array)
+        .expect("disabled should be an array")
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(disabled, vec!["grep"]);
+}
+
+#[test]
 fn optimize_with_sufficient_traces_renders_recommendations() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");

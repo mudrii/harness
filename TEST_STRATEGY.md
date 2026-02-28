@@ -33,6 +33,8 @@ Define how acceptance criteria are verified with TDD and ATDD.
 2. `deprecated` stage produces blocking lint output.
 3. `deprecated` stage does not block `apply` by itself.
 4. `disabled` stage blocks `apply`/guardrails.
+5. `apply --apply-mode apply` promotes `disabled` entries into `tools.baseline.forbidden`.
+6. `apply --apply-mode preview` does not persist promotion writes.
 
 ## Acceptance-to-test mapping
 

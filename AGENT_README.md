@@ -39,7 +39,7 @@ Implement requested changes with minimal, deterministic diffs while preserving C
 6. Keep lifecycle semantics stable:
    - `observe` = warning only
    - `deprecated` = blocking lint finding
-   - `disabled` = forbidden on apply/guardrails
+   - `disabled` = promoted to baseline forbidden on apply mode, and forbidden on apply/guardrails
 
 ## Implementation policy
 

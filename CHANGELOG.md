@@ -11,11 +11,13 @@ All notable changes to this project should be documented in this file.
   - rejects duplicate tools across lifecycle stages
 - CLI ATDD coverage for `observe` warning behavior.
 - CLI ATDD and unit coverage proving `deprecated` tools remain apply-allowed.
+- Phase 3 lifecycle tests for disabled-tool promotion behavior in apply mode and preview no-write semantics.
 
 ### Changed
 
 - `init` scaffold now includes explicit `[tools.deprecated]` lifecycle fields.
 - Documentation updated to align contracts/examples/strategy with implemented lifecycle behavior.
+- `apply` now promotes `tools.deprecated.disabled` entries into `tools.baseline.forbidden` in `harness.toml` when running in apply mode.
 
 ## [0.1.0] - 2026-02-27
 

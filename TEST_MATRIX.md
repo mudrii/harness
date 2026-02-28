@@ -28,7 +28,7 @@ Map command acceptance criteria to verification layers.
 8. Lifecycle stage semantics:
    - `observe` warning-only
    - `deprecated` lint-blocking but apply-allowed
-   - `disabled` apply-blocking
+   - `disabled` promoted to baseline forbidden on apply mode; apply-blocking when violated
 
 ## Default verification sequence
 

@@ -55,7 +55,8 @@ Expected:
 
 Expected with lifecycle policy:
 - if config marks tool only under `tools.deprecated.deprecated`, apply remains allowed
-- if config marks tool under `tools.deprecated.disabled`, apply is rejected (exit `3`)
+- if config marks tool under `tools.deprecated.disabled`, apply mode promotes it into `tools.baseline.forbidden`
+- if disabled/forbidden policy is violated by planned commands, apply is rejected (exit `3`)
 
 ```bash
 harness apply /path/to/repo --apply-mode preview

@@ -13,6 +13,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use toml::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChangeAction {
@@ -64,7 +65,10 @@ pub fn execute_apply(cmd: &ApplyCommand) -> Result<()> {
     }
 
     let recommendation_ids = resolve_plan(&cmd.path, cmd, loaded.as_ref())?;
-    let changes = build_changes(&cmd.path, &recommendation_ids)?;
+    let mut changes = build_changes(&cmd.path, &recommendation_ids)?;
+    if let Some(lifecycle_change) = build_disabled_tool_promotion_change(&cmd.path)? {
+        changes.push(lifecycle_change);
+    }
     let planned_commands: Vec<&str> = if changes.is_empty() {
         Vec::new()
     } else {
@@ -224,6 +228,128 @@ fn build_changes(root: &Path, recommendation_ids: &[String]) -> Result<Vec<Plann
         }
     }
     Ok(changes)
+}
+
+fn build_disabled_tool_promotion_change(root: &Path) -> Result<Option<PlannedChange>> {
+    let path = root.join(config::DEFAULT_CONFIG_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(HarnessError::Io)?;
+    let mut parsed: Value = toml::from_str(&raw).map_err(|error| {
+        HarnessError::ConfigParse(format!("{}: {}", path.display(), error))
+    })?;
+
+    let root_table = parsed.as_table_mut().ok_or_else(|| {
+        HarnessError::ConfigParse(format!(
+            "{}: root TOML must be a table",
+            path.display()
+        ))
+    })?;
+    let tools = root_table
+        .entry("tools")
+        .or_insert_with(|| Value::Table(toml::map::Map::new()));
+    let tools_table = tools.as_table_mut().ok_or_else(|| {
+        HarnessError::ConfigParse(format!("{}: [tools] must be a table", path.display()))
+    })?;
+
+    let disabled_tools = {
+        let deprecated = tools_table
+            .entry("deprecated")
+            .or_insert_with(|| Value::Table(toml::map::Map::new()));
+        let deprecated_table = deprecated.as_table_mut().ok_or_else(|| {
+            HarnessError::ConfigParse(format!(
+                "{}: [tools.deprecated] must be a table",
+                path.display()
+            ))
+        })?;
+
+        let disabled = deprecated_table
+            .entry("disabled")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let disabled_array = disabled.as_array_mut().ok_or_else(|| {
+            HarnessError::ConfigParse(format!(
+                "{}: tools.deprecated.disabled must be an array",
+                path.display()
+            ))
+        })?;
+
+        let mut disabled_tools = Vec::new();
+        for entry in disabled_array.iter() {
+            let command = entry.as_str().ok_or_else(|| {
+                HarnessError::ConfigParse(format!(
+                    "{}: tools.deprecated.disabled entries must be strings",
+                    path.display()
+                ))
+            })?;
+            let normalized = command.trim();
+            if normalized.is_empty() {
+                continue;
+            }
+            if !disabled_tools
+                .iter()
+                .any(|existing: &String| existing == normalized)
+            {
+                disabled_tools.push(normalized.to_string());
+            }
+        }
+        *disabled = Value::Array(Vec::new());
+        disabled_tools
+    };
+    if disabled_tools.is_empty() {
+        return Ok(None);
+    }
+
+    let baseline = tools_table
+        .entry("baseline")
+        .or_insert_with(|| Value::Table(toml::map::Map::new()));
+    let baseline_table = baseline.as_table_mut().ok_or_else(|| {
+        HarnessError::ConfigParse(format!(
+            "{}: [tools.baseline] must be a table",
+            path.display()
+        ))
+    })?;
+
+    let forbidden = baseline_table
+        .entry("forbidden")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let forbidden_array = forbidden.as_array_mut().ok_or_else(|| {
+        HarnessError::ConfigParse(format!(
+            "{}: tools.baseline.forbidden must be an array",
+            path.display()
+        ))
+    })?;
+
+    let mut forbidden_tools = Vec::new();
+    for entry in forbidden_array.iter() {
+        let command = entry.as_str().ok_or_else(|| {
+            HarnessError::ConfigParse(format!(
+                "{}: tools.baseline.forbidden entries must be strings",
+                path.display()
+            ))
+        })?;
+        forbidden_tools.push(command.to_string());
+    }
+    for command in disabled_tools {
+        if !forbidden_tools.iter().any(|existing| existing == &command) {
+            forbidden_tools.push(command);
+        }
+    }
+
+    *forbidden = Value::Array(forbidden_tools.into_iter().map(Value::String).collect());
+    let content = toml::to_string(&parsed).map_err(|error| {
+        HarnessError::ConfigParse(format!("{}: failed to serialize promoted config: {}", path.display(), error))
+    })?;
+    if content == raw {
+        return Ok(None);
+    }
+
+    Ok(Some(PlannedChange {
+        path,
+        action: ChangeAction::Modify,
+        content,
+    }))
 }
 
 fn maybe_add_context_index_change(root: &Path, changes: &mut Vec<PlannedChange>) -> Result<()> {
@@ -482,5 +608,76 @@ mod tests {
 
         assert_eq!(files[0]["path"].as_str(), Some("a.txt"));
         assert_eq!(files[1]["path"].as_str(), Some("b.txt"));
+    }
+
+    #[test]
+    fn test_build_disabled_tool_promotion_change_moves_disabled_to_forbidden() {
+        let tmp = TempDir::new().expect("temp dir should create");
+        fs::write(
+            tmp.path().join("harness.toml"),
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.baseline]
+forbidden = ["git push --force"]
+
+[tools.deprecated]
+disabled = ["grep", "git push --force"]
+"#,
+        )
+        .expect("harness.toml should write");
+
+        let change = build_disabled_tool_promotion_change(tmp.path())
+            .expect("promotion should succeed")
+            .expect("promotion change should be generated");
+        assert_eq!(change.path, tmp.path().join("harness.toml"));
+        assert_eq!(change.action, ChangeAction::Modify);
+
+        let parsed: toml::Value =
+            toml::from_str(&change.content).expect("modified config should parse");
+        let forbidden = parsed
+            .get("tools")
+            .and_then(|tools| tools.get("baseline"))
+            .and_then(|baseline| baseline.get("forbidden"))
+            .and_then(toml::Value::as_array)
+            .expect("forbidden should be an array")
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>();
+        assert!(forbidden.contains(&"git push --force"));
+        assert!(forbidden.contains(&"grep"));
+
+        let disabled = parsed
+            .get("tools")
+            .and_then(|tools| tools.get("deprecated"))
+            .and_then(|deprecated| deprecated.get("disabled"))
+            .and_then(toml::Value::as_array)
+            .expect("disabled should be an array");
+        assert!(disabled.is_empty(), "disabled should be cleared after promotion");
+    }
+
+    #[test]
+    fn test_build_disabled_tool_promotion_change_noop_when_disabled_empty() {
+        let tmp = TempDir::new().expect("temp dir should create");
+        fs::write(
+            tmp.path().join("harness.toml"),
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.baseline]
+forbidden = ["git push --force"]
+
+[tools.deprecated]
+disabled = []
+"#,
+        )
+        .expect("harness.toml should write");
+
+        let change = build_disabled_tool_promotion_change(tmp.path()).expect("promotion should run");
+        assert!(change.is_none(), "empty disabled list should not generate changes");
     }
 }
