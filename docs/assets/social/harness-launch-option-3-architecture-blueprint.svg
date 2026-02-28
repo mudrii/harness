@@ -1,0 +1,68 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#09111f"/>
+      <stop offset="100%" stop-color="#0f1e33"/>
+    </linearGradient>
+    <linearGradient id="card3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#163252"/>
+      <stop offset="100%" stop-color="#1b3f67"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg3)"/>
+
+  <g opacity="0.1">
+    <path d="M0 90 H1600 M0 180 H1600 M0 270 H1600 M0 360 H1600 M0 450 H1600 M0 540 H1600 M0 630 H1600 M0 720 H1600 M0 810 H1600"
+      stroke="#d8e4ff"/>
+    <path d="M90 0 V900 M180 0 V900 M270 0 V900 M360 0 V900 M450 0 V900 M540 0 V900 M630 0 V900 M720 0 V900 M810 0 V900 M900 0 V900 M990 0 V900 M1080 0 V900 M1170 0 V900 M1260 0 V900 M1350 0 V900 M1440 0 V900 M1530 0 V900"
+      stroke="#d8e4ff"/>
+  </g>
+
+  <g transform="translate(120,150)">
+    <rect x="0" y="0" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="28" y="67" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">CLI</text>
+
+    <rect x="390" y="0" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="416" y="67" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Scanner</text>
+
+    <rect x="780" y="0" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="806" y="67" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Analyzer</text>
+
+    <rect x="1170" y="0" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="1188" y="67" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Optimizer</text>
+
+    <rect x="200" y="240" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="227" y="307" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Guardrails</text>
+
+    <rect x="590" y="240" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="616" y="307" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Generator</text>
+
+    <rect x="980" y="240" width="280" height="110" rx="16" fill="url(#card3)" stroke="#89c3ff" stroke-width="2"/>
+    <text x="1031" y="307" fill="#dcecff" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Apply</text>
+
+    <rect x="395" y="470" width="280" height="110" rx="16" fill="#1f4256" stroke="#6be0b3" stroke-width="2"/>
+    <text x="430" y="537" fill="#d9fff0" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Reports</text>
+
+    <rect x="785" y="470" width="280" height="110" rx="16" fill="#1f4256" stroke="#6be0b3" stroke-width="2"/>
+    <text x="838" y="537" fill="#d9fff0" font-size="34" font-family="Inter, Segoe UI, Arial, sans-serif">Traces</text>
+
+    <g stroke="#8ec4ff" stroke-width="4">
+      <line x1="280" y1="55" x2="390" y2="55"/>
+      <line x1="670" y1="55" x2="780" y2="55"/>
+      <line x1="1060" y1="55" x2="1170" y2="55"/>
+
+      <line x1="1310" y1="110" x2="1120" y2="240"/>
+      <line x1="920" y1="110" x2="730" y2="240"/>
+      <line x1="530" y1="110" x2="340" y2="240"/>
+
+      <line x1="730" y1="350" x2="535" y2="470"/>
+      <line x1="1120" y1="350" x2="925" y2="470"/>
+
+      <line x1="925" y1="525" x2="1170" y2="55" stroke="#6be0b3"/>
+    </g>
+  </g>
+
+  <text x="120" y="82" fill="#f0f5ff" font-size="56" font-family="Inter, Segoe UI, Arial, sans-serif" font-weight="700">Harness</text>
+  <text x="120" y="860" fill="#a9bedf" font-size="32" font-family="Inter, Segoe UI, Arial, sans-serif">Deterministic architecture for production AI agents</text>
+</svg>
