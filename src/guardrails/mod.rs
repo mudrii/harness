@@ -128,4 +128,22 @@ disabled = ["apply_patch"]
         let result = validate_with_config(&["apply_patch"], 0, Some(&cfg));
         assert!(matches!(result, Err(HarnessError::ForbiddenToolAccess(_))));
     }
+
+    #[test]
+    fn test_validate_with_config_allows_deprecated_tool_command() {
+        let cfg: HarnessConfig = toml::from_str(
+            r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+deprecated = ["apply_patch"]
+"#,
+        )
+        .expect("config should parse");
+
+        let result = validate_with_config(&["apply_patch"], 0, Some(&cfg));
+        assert!(result.is_ok());
+    }
 }

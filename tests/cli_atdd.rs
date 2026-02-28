@@ -616,6 +616,35 @@ disabled = ["apply_patch"]
 }
 
 #[test]
+fn apply_allows_deprecated_tool_policy() {
+    let repo = TempDir::new().expect("temp dir should be created");
+    init_git_repo(repo.path());
+    fs::write(
+        repo.path().join("harness.toml"),
+        r#"
+[project]
+name = "sample"
+profile = "general"
+
+[tools.deprecated]
+deprecated = ["apply_patch"]
+"#,
+    )
+    .expect("config should write");
+
+    let mut cmd = Command::cargo_bin("harness").expect("binary should compile");
+    cmd.arg("apply")
+        .arg(repo.path())
+        .arg("--plan-all")
+        .arg("--apply-mode")
+        .arg("preview")
+        .arg("--allow-dirty")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("scope:"));
+}
+
+#[test]
 fn optimize_with_sufficient_traces_renders_recommendations() {
     let repo = TempDir::new().expect("temp dir should be created");
     fs::create_dir_all(repo.path().join(".git")).expect(".git directory should create");
