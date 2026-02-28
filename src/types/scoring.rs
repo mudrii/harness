@@ -2,6 +2,7 @@ use serde::Serialize;
 
 pub type Score = f32;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CategoryScoreBuilder {
     pub base: Score,
@@ -9,6 +10,7 @@ pub struct CategoryScoreBuilder {
     pub penalties: Score,
 }
 
+#[allow(dead_code)]
 impl CategoryScoreBuilder {
     pub fn new(base: Score) -> Self {
         Self {

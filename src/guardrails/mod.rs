@@ -4,6 +4,7 @@ pub mod loop_guard;
 use crate::error::HarnessError;
 use crate::types::config::HarnessConfig;
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn validate(commands: &[&str], planned_edits: u32) -> Result<(), HarnessError> {
     validate_with_config(commands, planned_edits, None)
 }

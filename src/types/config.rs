@@ -2,6 +2,7 @@ use crate::error::HarnessError;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessConfig {
     pub project: ProjectConfig,
@@ -14,6 +15,7 @@ pub struct HarnessConfig {
     pub workflow: Option<WorkflowConfig>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
@@ -32,6 +34,7 @@ fn default_branch() -> String {
     "main".to_string()
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContextConfig {
     pub agents_map: Option<String>,
@@ -92,6 +95,7 @@ pub enum LogSampling {
     None,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContinuityConfig {
     pub initializer: Option<String>,
@@ -142,6 +146,7 @@ impl Default for OptimizationThresholds {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowConfig {
     pub max_consecutive_failures: Option<u32>,
@@ -171,6 +176,7 @@ impl HarnessConfig {
         }
     }
 
+    #[allow(dead_code)]
     pub fn max_penalty_per_bucket(&self) -> f32 {
         self.metrics
             .as_ref()
@@ -348,6 +354,7 @@ fn validate_tool_deprecation_lifecycle(deprecated: &ToolDeprecated) -> Result<()
     Ok(())
 }
 
+#[allow(dead_code)]
 pub type Config = HarnessConfig;
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ pub enum Effort {
     Xs,
     S,
     M,
+    #[allow(dead_code)]
     L,
 }
 
@@ -45,6 +46,7 @@ impl Effort {
 pub enum Risk {
     Safe,
     Medium,
+    #[allow(dead_code)]
     High,
 }
 

@@ -714,6 +714,7 @@ fn validate_bench_compare_compatibility(
     Ok(())
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TraceRecord {
     timestamp: String,
@@ -909,6 +910,7 @@ fn scan_traces(trace_dir: &std::path::Path, max_age_days: u32) -> Result<TraceDa
     Ok(TraceData { stats, recent })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn count_recent_traces(
     trace_dir: &std::path::Path,
     max_age_days: u32,

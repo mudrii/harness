@@ -27,6 +27,7 @@ pub struct QualitySignals {
 
 #[derive(Debug, Clone)]
 pub struct RepoModel {
+    #[allow(dead_code)]
     pub root: PathBuf,
     pub file_count: usize,
     pub docs: DocSignals,

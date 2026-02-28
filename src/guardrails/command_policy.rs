@@ -20,6 +20,7 @@ impl Default for CommandPolicy {
     }
 }
 
+#[allow(dead_code)]
 pub fn is_forbidden(cmd: &str) -> bool {
     is_forbidden_with_policy(cmd, &CommandPolicy::default())
 }
