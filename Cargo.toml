@@ -1,6 +1,6 @@
 [package]
 name = "harness"
-version = "0.2.0"
+version = "0.2.1"
 description = "Rust CLI for harness analysis and optimization of AI agent workflows"
 authors = ["mudrii"]
 license = "MIT"
